@@ -10,13 +10,14 @@ A native macOS paper queue app built with `SwiftUI`, `SwiftData`, `PDFKit`, and 
 - Show `Today`, `Inbox`, `Queue`, `Library`, and `Settings` screens.
 - Read cached PDFs inside the app.
 - Schedule native macOS reminders for due and overdue papers.
+- Capture in-app feedback with context snapshots and review it later from the feedback log.
 
 ## Project layout
 
 - `Sources/PaperReadingScheduler/Models`: `SwiftData` entities and enums.
-- `Sources/PaperReadingScheduler/Services`: import, metadata, scheduling, PDF cache, and reminders.
-- `Sources/PaperReadingScheduler/Views`: app UI, import sheet, reader, settings, and detail screen.
-- `Tests/PaperReadingSchedulerTests`: unit tests for import, scheduling, metadata, and reminders.
+- `Sources/PaperReadingScheduler/Services`: import, metadata, scheduling, PDF cache, reminders, and feedback persistence.
+- `Sources/PaperReadingScheduler/Views`: app UI, import sheet, reader, settings, detail screen, and feedback capture.
+- `Tests/PaperReadingSchedulerTests`: unit tests for import, scheduling, metadata, reminders, and feedback.
 - `Scripts/build-app.sh`: builds a standalone `.app` bundle in `dist/`.
 
 ## Build The App Bundle
