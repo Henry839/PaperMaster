@@ -19,6 +19,7 @@ struct PaperDetailView: View {
                 headerSection
                 quickActionsSection
                 metadataSection
+                bibtexSection
                 tagsSection
                 abstractSection
                 notesSection
@@ -219,9 +220,63 @@ struct PaperDetailView: View {
                 }
             }
 
+            if let venueDisplayText {
+                LabeledContent("Venue") {
+                    Text(venueDisplayText)
+                        .foregroundStyle(.secondary)
+                        .textSelection(.enabled)
+                }
+            }
+
+            if let doi = paper.doi, doi.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false {
+                LabeledContent("DOI") {
+                    Text(doi)
+                        .foregroundStyle(.secondary)
+                        .textSelection(.enabled)
+                }
+            }
+
             LabeledContent("Added") {
                 Text(paper.dateAdded.formatted(date: .abbreviated, time: .shortened))
                     .foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    private var bibtexSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .top) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("BibTeX")
+                        .font(.title3.weight(.semibold))
+                    Text("Copy the saved citation directly into your writing workflow.")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                }
+
+                Spacer()
+
+                Button("Copy BibTeX", systemImage: "doc.on.doc") {
+                    services.copyText(bibtexText, notice: "Copied BibTeX.")
+                }
+                .disabled(bibtexText.isEmpty)
+            }
+
+            if bibtexText.isEmpty {
+                Text("No BibTeX saved for this paper yet.")
+                    .foregroundStyle(.secondary)
+            } else {
+                Text(bibtexText)
+                    .font(.system(.body, design: .monospaced))
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(14)
+                    .background(.background)
+                    .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 14, style: .continuous)
+                            .stroke(Color.primary.opacity(0.06), lineWidth: 1)
+                    )
             }
         }
     }
@@ -313,5 +368,25 @@ struct PaperDetailView: View {
                         .stroke(Color.primary.opacity(0.06), lineWidth: 1)
                 )
         }
+    }
+
+    private var venueDisplayText: String? {
+        let trimmedVenueName = paper.venueName?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedVenueKey = paper.venueKey?.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        switch (trimmedVenueName, trimmedVenueKey) {
+        case let (.some(name), .some(key)) where name.isEmpty == false && key.isEmpty == false:
+            return "\(name) [\(key)]"
+        case let (.some(name), _) where name.isEmpty == false:
+            return name
+        case let (_, .some(key)) where key.isEmpty == false:
+            return key
+        default:
+            return nil
+        }
+    }
+
+    private var bibtexText: String {
+        paper.bibtex?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
     }
 }

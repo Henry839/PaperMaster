@@ -13,6 +13,17 @@ struct PresentedNotice: Identifiable {
     let message: String
 }
 
+protocol TextClipboardWriting: Sendable {
+    func setString(_ string: String)
+}
+
+struct SystemTextClipboardWriter: TextClipboardWriting {
+    func setString(_ string: String) {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(string, forType: .string)
+    }
+}
+
 @MainActor
 @Observable
 final class AppServices {
@@ -21,6 +32,7 @@ final class AppServices {
     let pdfCacheService: PDFCacheService
     let reminderService: ReminderService
     let taggingCredentialStore: TaggingCredentialStoring
+    let textClipboard: TextClipboardWriting
     @ObservationIgnored private var noticeDismissTask: Task<Void, Never>?
     private(set) var didBootstrap = false
     var presentedError: PresentedError?
@@ -31,13 +43,15 @@ final class AppServices {
         schedulerService: SchedulerService = SchedulerService(),
         pdfCacheService: PDFCacheService = PDFCacheService(),
         reminderService: ReminderService = ReminderService(),
-        taggingCredentialStore: TaggingCredentialStoring = InMemoryTaggingCredentialStore()
+        taggingCredentialStore: TaggingCredentialStoring = InMemoryTaggingCredentialStore(),
+        textClipboard: TextClipboardWriting = SystemTextClipboardWriter()
     ) {
         self.importService = importService
         self.schedulerService = schedulerService
         self.pdfCacheService = pdfCacheService
         self.reminderService = reminderService
         self.taggingCredentialStore = taggingCredentialStore
+        self.textClipboard = textClipboard
     }
 
     static func live() -> AppServices {
@@ -46,6 +60,7 @@ final class AppServices {
         return AppServices(
             importService: PaperImportService(
                 metadataResolver: resolver,
+                publicationEnricher: CrossrefPublicationEnricher(),
                 tagGenerator: OpenAICompatiblePaperTagger(),
                 credentialStore: credentialStore
             ),
@@ -255,6 +270,12 @@ final class AppServices {
         } catch {
             present(error)
         }
+    }
+
+    func copyText(_ text: String, notice: String) {
+        guard text.isEmpty == false else { return }
+        textClipboard.setString(text)
+        showNotice(notice)
     }
 
     @discardableResult

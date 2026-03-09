@@ -1,4 +1,3 @@
-import AppKit
 import SwiftData
 import SwiftUI
 
@@ -185,7 +184,7 @@ struct SettingsView: View {
                 }
                 Spacer()
                 Button("Copy All Feedback", systemImage: "doc.on.doc") {
-                    copyText(
+                    services.copyText(
                         FeedbackEntry.combinedExportText(for: feedbackEntries),
                         notice: "Copied all feedback."
                     )
@@ -205,7 +204,7 @@ struct SettingsView: View {
                 LazyVStack(spacing: 12) {
                     ForEach(feedbackEntries) { entry in
                         FeedbackLogRow(entry: entry) {
-                            copyText(entry.exportText, notice: "Copied feedback.")
+                            services.copyText(entry.exportText, notice: "Copied feedback.")
                         }
                     }
                 }
@@ -219,13 +218,6 @@ struct SettingsView: View {
             RoundedRectangle(cornerRadius: 20, style: .continuous)
                 .stroke(Color.primary.opacity(0.06), lineWidth: 1)
         )
-    }
-
-    private func copyText(_ text: String, notice: String) {
-        guard text.isEmpty == false else { return }
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(text, forType: .string)
-        services.showNotice(notice)
     }
 
     private func readinessSymbol(for readiness: AITaggingReadiness) -> String {

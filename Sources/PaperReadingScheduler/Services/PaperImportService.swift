@@ -62,15 +62,18 @@ enum PaperImportError: LocalizedError {
 @MainActor
 struct PaperImportService {
     let metadataResolver: MetadataResolving
+    let publicationEnricher: PublicationEnriching?
     let tagGenerator: PaperTagGenerating?
     let credentialStore: TaggingCredentialStoring
 
     init(
         metadataResolver: MetadataResolving,
+        publicationEnricher: PublicationEnriching? = nil,
         tagGenerator: PaperTagGenerating? = nil,
         credentialStore: TaggingCredentialStoring = InMemoryTaggingCredentialStore()
     ) {
         self.metadataResolver = metadataResolver
+        self.publicationEnricher = publicationEnricher
         self.tagGenerator = tagGenerator
         self.credentialStore = credentialStore
     }
@@ -106,11 +109,16 @@ struct PaperImportService {
         }
 
         let status = (request.preferredBehavior ?? settings.defaultImportBehavior) == .scheduleImmediately ? PaperStatus.scheduled : .inbox
+        let publicationEnrichment = await enrichPublication(for: draft)
         let autoTaggingOutcome = await generateAutomaticTags(for: draft, settings: settings, in: context)
         let paper = Paper(
             title: draft.title,
             authors: draft.authors,
             abstractText: draft.abstractText,
+            venueKey: publicationEnrichment.venueKey,
+            venueName: publicationEnrichment.venueName,
+            doi: publicationEnrichment.doi,
+            bibtex: publicationEnrichment.bibtex,
             sourceURL: draft.sourceURL,
             pdfURL: draft.pdfURL,
             status: status,
@@ -138,6 +146,7 @@ struct PaperImportService {
             title: paper.title,
             authors: paper.authors,
             abstractText: paper.abstractText,
+            doi: paper.doi,
             sourceURL: paper.sourceURL,
             pdfURL: paper.pdfURL
         )
@@ -156,9 +165,14 @@ struct PaperImportService {
             throw PaperImportError.missingTitle
         }
 
+        let publicationEnrichment = await enrichPublication(for: draft)
         paper.title = draft.title
         paper.authors = draft.authors
         paper.abstractText = draft.abstractText
+        paper.venueKey = publicationEnrichment.venueKey
+        paper.venueName = publicationEnrichment.venueName
+        paper.doi = publicationEnrichment.doi
+        paper.bibtex = publicationEnrichment.bibtex
         paper.sourceURL = draft.sourceURL
         paper.pdfURL = draft.pdfURL
         paper.autoTaggingStatusMessage = nil
@@ -217,6 +231,32 @@ struct PaperImportService {
         }
 
         return keys
+    }
+
+    private func enrichPublication(for draft: PaperDraft) async -> PublicationEnrichmentResult {
+        let fallback = PublicationEnrichmentResult(doi: draft.doi)
+
+        guard let publicationEnricher else {
+            return fallback
+        }
+
+        let request = PublicationEnrichmentRequest(
+            title: draft.title,
+            authors: draft.authors,
+            sourceURL: draft.sourceURL,
+            pdfURL: draft.pdfURL,
+            arxivID: draft.arxivID,
+            doi: draft.doi,
+            publishedYear: draft.publishedYear
+        )
+
+        let enrichment = await publicationEnricher.enrich(for: request)
+        return PublicationEnrichmentResult(
+            venueKey: enrichment.venueKey,
+            venueName: enrichment.venueName,
+            doi: enrichment.doi ?? draft.doi,
+            bibtex: enrichment.bibtex
+        )
     }
 
     private func generateAutomaticTags(
@@ -288,6 +328,9 @@ private struct PaperDraft {
     var title: String = ""
     var authors: [String] = []
     var abstractText: String = ""
+    var arxivID: String?
+    var doi: String?
+    var publishedYear: Int?
     var sourceURL: URL?
     var pdfURL: URL?
 
@@ -295,12 +338,18 @@ private struct PaperDraft {
         title: String = "",
         authors: [String] = [],
         abstractText: String = "",
+        arxivID: String? = nil,
+        doi: String? = nil,
+        publishedYear: Int? = nil,
         sourceURL: URL? = nil,
         pdfURL: URL? = nil
     ) {
         self.title = title
         self.authors = authors
         self.abstractText = abstractText
+        self.arxivID = arxivID
+        self.doi = doi
+        self.publishedYear = publishedYear
         self.sourceURL = sourceURL
         self.pdfURL = pdfURL
     }
@@ -309,6 +358,9 @@ private struct PaperDraft {
         title = resolved.title
         authors = resolved.authors
         abstractText = resolved.abstractText
+        arxivID = resolved.arxivID
+        doi = resolved.doi
+        publishedYear = resolved.publishedYear
         sourceURL = resolved.sourceURL
         pdfURL = resolved.pdfURL
     }

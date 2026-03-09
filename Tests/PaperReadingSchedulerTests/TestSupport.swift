@@ -48,6 +48,28 @@ final class SpyPaperTagger: PaperTagGenerating, @unchecked Sendable {
     }
 }
 
+final class SpyPublicationEnricher: PublicationEnriching, @unchecked Sendable {
+    private(set) var requests: [PublicationEnrichmentRequest] = []
+    private let handler: @Sendable (PublicationEnrichmentRequest) -> PublicationEnrichmentResult
+
+    init(
+        handler: @escaping @Sendable (PublicationEnrichmentRequest) -> PublicationEnrichmentResult = { _ in
+            PublicationEnrichmentResult()
+        }
+    ) {
+        self.handler = handler
+    }
+
+    var callCount: Int {
+        requests.count
+    }
+
+    func enrich(for request: PublicationEnrichmentRequest) async -> PublicationEnrichmentResult {
+        requests.append(request)
+        return handler(request)
+    }
+}
+
 final class FakeTaggingCredentialStore: TaggingCredentialStoring, @unchecked Sendable {
     var apiKey: String?
 
@@ -66,6 +88,18 @@ final class FakeTaggingCredentialStore: TaggingCredentialStoring, @unchecked Sen
 
     func deleteAPIKey() throws {
         apiKey = nil
+    }
+}
+
+final class FakeTextClipboard: TextClipboardWriting, @unchecked Sendable {
+    private(set) var copiedStrings: [String] = []
+
+    var lastCopiedString: String? {
+        copiedStrings.last
+    }
+
+    func setString(_ string: String) {
+        copiedStrings.append(string)
     }
 }
 

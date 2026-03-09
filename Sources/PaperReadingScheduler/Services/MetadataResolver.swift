@@ -14,8 +14,31 @@ struct ResolvedPaperMetadata: Sendable {
     var title: String
     var authors: [String]
     var abstractText: String
+    var arxivID: String?
+    var doi: String?
+    var publishedYear: Int?
     var sourceURL: URL?
     var pdfURL: URL?
+
+    init(
+        title: String,
+        authors: [String],
+        abstractText: String,
+        arxivID: String? = nil,
+        doi: String? = nil,
+        publishedYear: Int? = nil,
+        sourceURL: URL?,
+        pdfURL: URL?
+    ) {
+        self.title = title
+        self.authors = authors
+        self.abstractText = abstractText
+        self.arxivID = arxivID
+        self.doi = doi
+        self.publishedYear = publishedYear
+        self.sourceURL = sourceURL
+        self.pdfURL = pdfURL
+    }
 }
 
 enum MetadataResolverError: LocalizedError {
@@ -59,6 +82,9 @@ struct MetadataResolver: MetadataResolving {
             title: inferredTitle(from: url),
             authors: [],
             abstractText: "",
+            arxivID: nil,
+            doi: nil,
+            publishedYear: nil,
             sourceURL: url,
             pdfURL: nil
         )
@@ -92,6 +118,9 @@ struct MetadataResolver: MetadataResolving {
             title: entry.title,
             authors: entry.authors,
             abstractText: entry.summary,
+            arxivID: id,
+            doi: entry.doi,
+            publishedYear: entry.publishedYear,
             sourceURL: sourceURL,
             pdfURL: pdfURL
         )
@@ -102,6 +131,9 @@ struct MetadataResolver: MetadataResolving {
             title: inferredTitle(from: url),
             authors: [],
             abstractText: "",
+            arxivID: url.arxivIdentifier,
+            doi: nil,
+            publishedYear: nil,
             sourceURL: url,
             pdfURL: url
         )
@@ -121,6 +153,8 @@ private struct ArXivEntry {
     var title: String = ""
     var authors: [String] = []
     var summary: String = ""
+    var doi: String?
+    var publishedYear: Int?
     var pdfURL: URL?
 }
 
@@ -189,14 +223,15 @@ private final class ArXivMetadataParser: NSObject, XMLParserDelegate {
         let text = currentValue
             .replacingOccurrences(of: "\n", with: " ")
             .trimmingCharacters(in: .whitespacesAndNewlines)
+        let normalizedElementName = normalizedElementName(elementName: elementName, qualifiedName: qName)
 
         guard isInsideEntry else { return }
 
-        if isInsideAuthor, elementName == "name", !text.isEmpty {
+        if isInsideAuthor, normalizedElementName == "name", !text.isEmpty {
             currentAuthorName = text
         }
 
-        switch elementName {
+        switch normalizedElementName {
         case "title":
             if entry.title.isEmpty, !text.isEmpty {
                 entry.title = text
@@ -204,6 +239,15 @@ private final class ArXivMetadataParser: NSObject, XMLParserDelegate {
         case "summary":
             if entry.summary.isEmpty, !text.isEmpty {
                 entry.summary = text
+            }
+        case "doi":
+            if entry.doi == nil, !text.isEmpty {
+                entry.doi = text
+            }
+        case "published":
+            if entry.publishedYear == nil,
+               let publishedAt = ISO8601DateFormatter().date(from: text) {
+                entry.publishedYear = Calendar(identifier: .gregorian).component(.year, from: publishedAt)
             }
         case "author":
             if !currentAuthorName.isEmpty {
@@ -219,6 +263,11 @@ private final class ArXivMetadataParser: NSObject, XMLParserDelegate {
         }
 
         currentValue = ""
+    }
+
+    private func normalizedElementName(elementName: String, qualifiedName: String?) -> String {
+        let candidate = qualifiedName ?? elementName
+        return candidate.components(separatedBy: ":").last?.lowercased() ?? candidate.lowercased()
     }
 }
 
@@ -244,6 +293,11 @@ extension URL {
 
     var isLikelyPDF: Bool {
         pathExtension.lowercased() == "pdf"
+    }
+
+    var arxivAbstractURL: URL? {
+        guard let identifier = arxivIdentifier else { return nil }
+        return URL(string: "https://arxiv.org/abs/\(identifier)")
     }
 
     var canonicalArxivIdentifier: String? {

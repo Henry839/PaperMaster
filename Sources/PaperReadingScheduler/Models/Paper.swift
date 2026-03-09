@@ -7,6 +7,10 @@ final class Paper {
     var title: String
     var authorsText: String
     var abstractText: String
+    var venueKey: String?
+    var venueName: String?
+    var doi: String?
+    var bibtex: String?
     var sourceURLString: String?
     var pdfURLString: String?
     var cachedPDFPath: String?
@@ -26,6 +30,10 @@ final class Paper {
         title: String,
         authors: [String] = [],
         abstractText: String = "",
+        venueKey: String? = nil,
+        venueName: String? = nil,
+        doi: String? = nil,
+        bibtex: String? = nil,
         sourceURL: URL? = nil,
         pdfURL: URL? = nil,
         cachedPDFPath: String? = nil,
@@ -44,6 +52,10 @@ final class Paper {
         self.title = title
         self.authorsText = authors.joined(separator: ", ")
         self.abstractText = abstractText
+        self.venueKey = venueKey
+        self.venueName = venueName
+        self.doi = doi
+        self.bibtex = bibtex
         self.sourceURLString = sourceURL?.absoluteString
         self.pdfURLString = pdfURL?.absoluteString
         self.cachedPDFPath = cachedPDFPath
@@ -119,6 +131,9 @@ final class Paper {
             title,
             authorsText,
             abstractText,
+            venueKey ?? "",
+            venueName ?? "",
+            doi ?? "",
             tagNames.joined(separator: " ")
         ]
         .joined(separator: " ")

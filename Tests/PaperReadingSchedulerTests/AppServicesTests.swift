@@ -83,4 +83,28 @@ final class AppServicesTests: XCTestCase {
         XCTAssertEqual(existingPaper.queuePosition, 0)
         XCTAssertEqual(try context.fetchCount(FetchDescriptor<Paper>()), 1)
     }
+
+    func testCopyTextWritesToClipboardAndShowsNotice() {
+        let clipboard = FakeTextClipboard()
+        let services = AppServices(
+            importService: PaperImportService(
+                metadataResolver: StubMetadataResolver(
+                    metadata: ResolvedPaperMetadata(
+                        title: "",
+                        authors: [],
+                        abstractText: "",
+                        sourceURL: nil,
+                        pdfURL: nil
+                    )
+                )
+            ),
+            reminderService: ReminderService(center: FakeNotificationCenter()),
+            textClipboard: clipboard
+        )
+
+        services.copyText("@article{test}", notice: "Copied BibTeX.")
+
+        XCTAssertEqual(clipboard.lastCopiedString, "@article{test}")
+        XCTAssertEqual(services.presentedNotice?.message, "Copied BibTeX.")
+    }
 }

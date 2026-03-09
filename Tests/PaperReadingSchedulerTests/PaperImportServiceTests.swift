@@ -33,6 +33,10 @@ final class PaperImportServiceTests: XCTestCase {
         XCTAssertEqual(Set(paper.tagNames), Set(["transformers", "nlp"]))
         XCTAssertEqual(paper.status, .scheduled)
         XCTAssertNil(paper.sourceURL)
+        XCTAssertNil(paper.venueKey)
+        XCTAssertNil(paper.venueName)
+        XCTAssertNil(paper.doi)
+        XCTAssertNil(paper.bibtex)
         XCTAssertNil(result.notice)
     }
 
@@ -59,6 +63,9 @@ final class PaperImportServiceTests: XCTestCase {
         XCTAssertEqual(paper.pdfURL?.absoluteString, "https://example.com/readings/agentic-workflows.pdf")
         XCTAssertEqual(paper.sourceURL?.absoluteString, "https://example.com/readings/agentic-workflows.pdf")
         XCTAssertEqual(paper.status, .scheduled)
+        XCTAssertNil(paper.venueKey)
+        XCTAssertNil(paper.venueName)
+        XCTAssertNil(paper.bibtex)
         XCTAssertNil(result.notice)
     }
 
@@ -278,5 +285,140 @@ final class PaperImportServiceTests: XCTestCase {
         XCTAssertEqual(result.paper.id, existingPaper.id)
         XCTAssertEqual(result.notice, "That paper is already in your library.")
         XCTAssertEqual(try context.fetchCount(FetchDescriptor<Paper>()), 1)
+    }
+
+    func testArxivImportStoresPublishedVenueAndGeneratedBibTeX() async throws {
+        let container = try TestSupport.makeInMemoryContainer()
+        let context = ModelContext(container)
+        let settings = UserSettings(defaultImportBehavior: .scheduleImmediately)
+        context.insert(settings)
+        let enricher = SpyPublicationEnricher { request in
+            XCTAssertEqual(request.arxivID, "2401.00001")
+            XCTAssertEqual(request.doi, "10.1000/test-doi")
+            return PublicationEnrichmentResult(
+                venueKey: "CVPR",
+                venueName: "Conference on Computer Vision and Pattern Recognition (CVPR)",
+                doi: "10.1000/test-doi",
+                bibtex: """
+                @inproceedings{doe2026planning,
+                  title = {Planning with Language Models},
+                  author = {Jane Doe and John Roe},
+                  year = {2026},
+                  booktitle = CVPR
+                }
+                """
+            )
+        }
+        let service = PaperImportService(
+            metadataResolver: StubMetadataResolver(
+                metadata: ResolvedPaperMetadata(
+                    title: "Planning with Language Models",
+                    authors: ["Jane Doe", "John Roe"],
+                    abstractText: "A compact abstract for testing.",
+                    arxivID: "2401.00001",
+                    doi: "10.1000/test-doi",
+                    publishedYear: 2026,
+                    sourceURL: URL(string: "https://arxiv.org/abs/2401.00001"),
+                    pdfURL: URL(string: "https://arxiv.org/pdf/2401.00001.pdf")
+                )
+            ),
+            publicationEnricher: enricher
+        )
+
+        let result = try await service.createPaper(
+            from: PaperCaptureRequest(sourceText: "https://arxiv.org/abs/2401.00001"),
+            settings: settings,
+            in: context
+        )
+
+        XCTAssertEqual(result.paper.venueKey, "CVPR")
+        XCTAssertEqual(result.paper.venueName, "Conference on Computer Vision and Pattern Recognition (CVPR)")
+        XCTAssertEqual(result.paper.doi, "10.1000/test-doi")
+        XCTAssertEqual(result.paper.bibtex?.contains("booktitle = CVPR"), true)
+        XCTAssertEqual(enricher.callCount, 1)
+    }
+
+    func testArxivImportLeavesVenueBlankAndStoresArxivBibTeXWhenPublicationIsUnverified() async throws {
+        let container = try TestSupport.makeInMemoryContainer()
+        let context = ModelContext(container)
+        let settings = UserSettings(defaultImportBehavior: .scheduleImmediately)
+        context.insert(settings)
+        let service = PaperImportService(
+            metadataResolver: StubMetadataResolver(
+                metadata: ResolvedPaperMetadata(
+                    title: "When AI Levels the Playing Field",
+                    authors: ["Xupeng Chen", "Shuchen Meng"],
+                    abstractText: "Economics paper.",
+                    arxivID: "2603.05565",
+                    publishedYear: 2026,
+                    sourceURL: URL(string: "https://arxiv.org/abs/2603.05565"),
+                    pdfURL: URL(string: "https://arxiv.org/pdf/2603.05565.pdf")
+                )
+            ),
+            publicationEnricher: SpyPublicationEnricher { _ in
+                PublicationEnrichmentResult(
+                    venueKey: nil,
+                    venueName: nil,
+                    doi: nil,
+                    bibtex: """
+                    @misc{chen2026playingfield,
+                      title = {When AI Levels the Playing Field},
+                      author = {Xupeng Chen and Shuchen Meng},
+                      year = {2026}
+                    }
+                    """
+                )
+            }
+        )
+
+        let result = try await service.createPaper(
+            from: PaperCaptureRequest(sourceText: "https://arxiv.org/abs/2603.05565"),
+            settings: settings,
+            in: context
+        )
+
+        XCTAssertNil(result.paper.venueKey)
+        XCTAssertNil(result.paper.venueName)
+        XCTAssertEqual(result.paper.bibtex?.contains("@misc"), true)
+    }
+
+    func testDuplicateArxivImportDoesNotTriggerPublicationEnrichment() async throws {
+        let container = try TestSupport.makeInMemoryContainer()
+        let context = ModelContext(container)
+        let settings = UserSettings(defaultImportBehavior: .scheduleImmediately)
+        let existingPaper = Paper(
+            title: "Existing",
+            sourceURL: URL(string: "https://arxiv.org/abs/2603.05565"),
+            pdfURL: URL(string: "https://arxiv.org/pdf/2603.05565v1.pdf"),
+            status: .scheduled
+        )
+        context.insert(settings)
+        context.insert(existingPaper)
+        let enricher = SpyPublicationEnricher { _ in
+            XCTFail("Publication enrichment should not run for duplicates")
+            return PublicationEnrichmentResult()
+        }
+        let service = PaperImportService(
+            metadataResolver: StubMetadataResolver(
+                metadata: ResolvedPaperMetadata(
+                    title: "Existing",
+                    authors: ["Jane Doe"],
+                    abstractText: "",
+                    arxivID: "2603.05565",
+                    sourceURL: URL(string: "https://arxiv.org/abs/2603.05565"),
+                    pdfURL: URL(string: "https://arxiv.org/pdf/2603.05565v1.pdf")
+                )
+            ),
+            publicationEnricher: enricher
+        )
+
+        let result = try await service.createPaper(
+            from: PaperCaptureRequest(sourceText: "https://arxiv.org/abs/2603.05565"),
+            settings: settings,
+            in: context
+        )
+
+        XCTAssertFalse(result.didCreatePaper)
+        XCTAssertEqual(enricher.callCount, 0)
     }
 }
