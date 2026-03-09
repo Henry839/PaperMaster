@@ -463,6 +463,11 @@ struct AppRootView: View {
         )
         .tag(Optional(paper.id))
         .contentShape(Rectangle())
+        .simultaneousGesture(
+            TapGesture().onEnded {
+                router.selectedPaperID = paper.id
+            }
+        )
 
         if router.selectedScreen == .queue, paper.status.isActiveQueue {
             row
