@@ -2,7 +2,7 @@ import XCTest
 @testable import PaperReadingScheduler
 
 final class QueueDragPreviewTests: XCTestCase {
-    func testReorderedIDsInsertDraggedPaperAfterHoveredRowWhenPointerIsBelowMidpoint() {
+    func testReorderedIDsMoveDraggedPaperAfterHoveredRowWhenDraggingDownwardAcrossMultipleItems() {
         let first = UUID()
         let second = UUID()
         let third = UUID()
@@ -18,7 +18,7 @@ final class QueueDragPreviewTests: XCTestCase {
         XCTAssertEqual(reorderedIDs, [second, third, first, fourth])
     }
 
-    func testReorderedIDsInsertDraggedPaperBeforeHoveredRowWhenPointerIsAboveMidpoint() {
+    func testReorderedIDsMoveDraggedPaperBeforeHoveredRowWhenDraggingUpwardAcrossMultipleItems() {
         let first = UUID()
         let second = UUID()
         let third = UUID()
@@ -34,7 +34,7 @@ final class QueueDragPreviewTests: XCTestCase {
         XCTAssertEqual(reorderedIDs, [first, fourth, second, third])
     }
 
-    func testReorderedIDsAreStableForRepeatedAfterTargetUpdates() {
+    func testReorderedIDsAreStableForRepeatedDownwardTargetUpdates() {
         let first = UUID()
         let second = UUID()
         let third = UUID()
@@ -45,6 +45,22 @@ final class QueueDragPreviewTests: XCTestCase {
             draggedID: first,
             targetID: third,
             insertAfterTarget: true
+        )
+
+        XCTAssertNil(reorderedIDs)
+    }
+
+    func testReorderedIDsAreStableForRepeatedUpwardTargetUpdates() {
+        let first = UUID()
+        let second = UUID()
+        let third = UUID()
+        let fourth = UUID()
+
+        let reorderedIDs = QueueDragPreview.reorderedIDs(
+            from: [first, fourth, second, third],
+            draggedID: fourth,
+            targetID: second,
+            insertAfterTarget: false
         )
 
         XCTAssertNil(reorderedIDs)
