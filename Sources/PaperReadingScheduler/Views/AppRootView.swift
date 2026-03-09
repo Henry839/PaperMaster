@@ -15,6 +15,7 @@ struct AppRootView: View {
     @State private var draggedQueuePaperID: UUID?
     @State private var queuePreviewPaperIDs: [UUID]?
     @State private var queueDropTargetPaperID: UUID?
+    @State private var queueRowHeights: [UUID: CGFloat] = [:]
 
     private var settings: UserSettings? {
         settingsList.first
@@ -286,6 +287,7 @@ struct AppRootView: View {
                 }
                 .listStyle(.inset(alternatesRowBackgrounds: true))
                 .animation(.snappy(duration: 0.18), value: queuePreviewPaperIDs)
+                .onPreferenceChange(QueueRowHeightPreferenceKey.self) { queueRowHeights = $0 }
                 .onDrop(
                     of: [UTType.text],
                     delegate: QueueListDropDelegate(
@@ -463,6 +465,7 @@ struct AppRootView: View {
         )
         .tag(Optional(paper.id))
         .contentShape(Rectangle())
+        .background(queueRowHeightReader(for: paper))
         .simultaneousGesture(
             TapGesture().onEnded {
                 router.selectedPaperID = paper.id
@@ -477,7 +480,13 @@ struct AppRootView: View {
                     delegate: QueueRowDropDelegate(
                         targetPaperID: paper.id,
                         draggedPaperID: draggedQueuePaperID,
-                        updatePreview: moveQueuePreview(hoveringOver:),
+                        updatePreview: { location in
+                            moveQueuePreview(
+                                hoveringOver: paper.id,
+                                locationY: location.y,
+                                rowHeight: queueRowHeights[paper.id]
+                            )
+                        },
                         commitDrop: commitQueueDrop,
                         clearDropTarget: clearQueueDropTarget(_:)
                     )
@@ -494,26 +503,29 @@ struct AppRootView: View {
         return NSItemProvider(object: paper.id.uuidString as NSString)
     }
 
-    private func moveQueuePreview(hoveringOver targetPaperID: UUID) {
-        guard let draggedQueuePaperID else { return }
+    private func moveQueuePreview(hoveringOver targetPaperID: UUID, locationY: CGFloat, rowHeight: CGFloat?) {
+        guard let draggedQueuePaperID, draggedQueuePaperID != targetPaperID else { return }
 
         if queuePreviewPaperIDs == nil {
             queuePreviewPaperIDs = queuePapers.map(\.id)
         }
 
-        guard var previewIDs = queuePreviewPaperIDs,
-              let currentIndex = previewIDs.firstIndex(of: draggedQueuePaperID),
-              let targetIndex = previewIDs.firstIndex(of: targetPaperID) else {
+        guard let previewIDs = queuePreviewPaperIDs,
+              let rowHeight, rowHeight > 0 else {
             return
         }
 
         queueDropTargetPaperID = targetPaperID
 
-        guard currentIndex != targetIndex else { return }
+        let insertAfterTarget = locationY >= rowHeight / 2
+        guard let reorderedPreview = QueueDragPreview.reorderedIDs(
+            from: previewIDs,
+            draggedID: draggedQueuePaperID,
+            targetID: targetPaperID,
+            insertAfterTarget: insertAfterTarget
+        ) else { return }
 
-        let movedID = previewIDs.remove(at: currentIndex)
-        previewIDs.insert(movedID, at: targetIndex)
-        queuePreviewPaperIDs = previewIDs
+        queuePreviewPaperIDs = reorderedPreview
     }
 
     private func commitQueueDrop() {
@@ -546,12 +558,22 @@ struct AppRootView: View {
         queuePreviewPaperIDs = nil
         queueDropTargetPaperID = nil
     }
+
+    @ViewBuilder
+    private func queueRowHeightReader(for paper: Paper) -> some View {
+        if router.selectedScreen == .queue, paper.status.isActiveQueue {
+            GeometryReader { proxy in
+                Color.clear
+                    .preference(key: QueueRowHeightPreferenceKey.self, value: [paper.id: proxy.size.height])
+            }
+        }
+    }
 }
 
 private struct QueueRowDropDelegate: DropDelegate {
     let targetPaperID: UUID
     let draggedPaperID: UUID?
-    let updatePreview: (UUID) -> Void
+    let updatePreview: (CGPoint) -> Void
     let commitDrop: () -> Void
     let clearDropTarget: (UUID) -> Void
 
@@ -561,11 +583,13 @@ private struct QueueRowDropDelegate: DropDelegate {
 
     func dropEntered(info: DropInfo) {
         guard draggedPaperID != nil else { return }
-        updatePreview(targetPaperID)
+        updatePreview(info.location)
     }
 
     func dropUpdated(info: DropInfo) -> DropProposal? {
-        DropProposal(operation: .move)
+        guard draggedPaperID != nil else { return nil }
+        updatePreview(info.location)
+        return DropProposal(operation: .move)
     }
 
     func dropExited(info: DropInfo) {
@@ -600,5 +624,40 @@ private struct QueueListDropDelegate: DropDelegate {
         guard hasActiveDrag else { return false }
         commitDrop()
         return true
+    }
+}
+
+struct QueueDragPreview {
+    static func reorderedIDs(
+        from previewIDs: [UUID],
+        draggedID: UUID,
+        targetID: UUID,
+        insertAfterTarget: Bool
+    ) -> [UUID]? {
+        guard draggedID != targetID,
+              let currentIndex = previewIDs.firstIndex(of: draggedID) else {
+            return nil
+        }
+
+        var reorderedIDs = previewIDs
+        reorderedIDs.remove(at: currentIndex)
+
+        guard let targetIndex = reorderedIDs.firstIndex(of: targetID) else {
+            return nil
+        }
+
+        let destinationIndex = min(reorderedIDs.count, targetIndex + (insertAfterTarget ? 1 : 0))
+        reorderedIDs.insert(draggedID, at: destinationIndex)
+
+        guard reorderedIDs != previewIDs else { return nil }
+        return reorderedIDs
+    }
+}
+
+private struct QueueRowHeightPreferenceKey: PreferenceKey {
+    static let defaultValue: [UUID: CGFloat] = [:]
+
+    static func reduce(value: inout [UUID: CGFloat], nextValue: () -> [UUID: CGFloat]) {
+        value.merge(nextValue(), uniquingKeysWith: { _, new in new })
     }
 }
