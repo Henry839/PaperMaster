@@ -30,8 +30,10 @@ final class AppServices {
     let importService: PaperImportService
     let schedulerService: SchedulerService
     let pdfCacheService: PDFCacheService
+    let paperStorageService: PaperStorageService
     let reminderService: ReminderService
     let taggingCredentialStore: TaggingCredentialStoring
+    let paperStorageCredentialStore: PaperStorageCredentialStoring
     let textClipboard: TextClipboardWriting
     @ObservationIgnored private let startupNoticeMessage: String?
     @ObservationIgnored private let startupErrorMessage: String?
@@ -44,8 +46,10 @@ final class AppServices {
         importService: PaperImportService,
         schedulerService: SchedulerService = SchedulerService(),
         pdfCacheService: PDFCacheService = PDFCacheService(),
+        paperStorageService: PaperStorageService = PaperStorageService(),
         reminderService: ReminderService = ReminderService(),
         taggingCredentialStore: TaggingCredentialStoring = InMemoryTaggingCredentialStore(),
+        paperStorageCredentialStore: PaperStorageCredentialStoring = InMemoryPaperStorageCredentialStore(),
         textClipboard: TextClipboardWriting = SystemTextClipboardWriter(),
         startupNoticeMessage: String? = nil,
         startupErrorMessage: String? = nil
@@ -53,8 +57,10 @@ final class AppServices {
         self.importService = importService
         self.schedulerService = schedulerService
         self.pdfCacheService = pdfCacheService
+        self.paperStorageService = paperStorageService
         self.reminderService = reminderService
         self.taggingCredentialStore = taggingCredentialStore
+        self.paperStorageCredentialStore = paperStorageCredentialStore
         self.textClipboard = textClipboard
         self.startupNoticeMessage = startupNoticeMessage
         self.startupErrorMessage = startupErrorMessage
@@ -65,18 +71,31 @@ final class AppServices {
         startupErrorMessage: String? = nil
     ) -> AppServices {
         let resolver = MetadataResolver()
-        let credentialStore = KeychainTaggingCredentialStore()
+        let taggingCredentialStore = KeychainTaggingCredentialStore()
+        let paperStorageCredentialStore = KeychainPaperStorageCredentialStore()
         return AppServices(
             importService: PaperImportService(
                 metadataResolver: resolver,
                 publicationEnricher: CrossrefPublicationEnricher(),
                 tagGenerator: OpenAICompatiblePaperTagger(),
-                credentialStore: credentialStore
+                credentialStore: taggingCredentialStore
             ),
-            taggingCredentialStore: credentialStore,
+            paperStorageService: PaperStorageService(
+                credentialStore: paperStorageCredentialStore
+            ),
+            taggingCredentialStore: taggingCredentialStore,
+            paperStorageCredentialStore: paperStorageCredentialStore,
             startupNoticeMessage: startupNoticeMessage,
             startupErrorMessage: startupErrorMessage
         )
+    }
+
+    var defaultPaperStorageDirectoryPath: String {
+        paperStorageService.defaultStorageDirectoryURL.path
+    }
+
+    var defaultPaperStorageDirectoryURL: URL {
+        paperStorageService.defaultStorageDirectoryURL
     }
 
     func bootstrap(in context: ModelContext, settings existingSettings: [UserSettings], papers: [Paper]) async {
@@ -126,11 +145,9 @@ final class AppServices {
             if paper.status.isActiveQueue {
                 paper.queuePosition = nextQueuePosition(in: currentPapers + [paper])
             }
-            if settings.autoCachePDFs, paper.pdfURL != nil {
-                _ = try? await pdfCacheService.cachePDF(for: paper)
-            }
+            let storageNotice = await storeManagedPDFIfPossible(for: paper, settings: settings)
             try persistAndSync(allPapers: currentPapers + [paper], settings: settings, context: context)
-            if let notice = result.notice {
+            if let notice = combinedNoticeMessages(result.notice, storageNotice) {
                 showNotice(notice)
             }
             return paper
@@ -301,6 +318,48 @@ final class AppServices {
         }
     }
 
+    func hasSavedPaperStoragePassword(for settings: UserSettings) -> Bool {
+        guard let endpoint = settings.paperStorageCredentialEndpoint else {
+            return false
+        }
+
+        do {
+            let password = try paperStorageCredentialStore.loadPassword(for: endpoint)
+            return password?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+        } catch {
+            present(error)
+            return false
+        }
+    }
+
+    func savePaperStoragePassword(_ password: String, for settings: UserSettings) {
+        guard let endpoint = settings.paperStorageCredentialEndpoint else {
+            present(PaperStorageServiceError.invalidConfiguration("Enter the SSH host, port, and username before saving a password."))
+            return
+        }
+
+        do {
+            try paperStorageCredentialStore.savePassword(password, for: endpoint)
+            let trimmedPassword = password.trimmingCharacters(in: .whitespacesAndNewlines)
+            showNotice(trimmedPassword.isEmpty ? "SSH password cleared." : "SSH password saved.")
+        } catch {
+            present(error)
+        }
+    }
+
+    func clearPaperStoragePassword(for settings: UserSettings) {
+        guard let endpoint = settings.paperStorageCredentialEndpoint else {
+            return
+        }
+
+        do {
+            try paperStorageCredentialStore.deletePassword(for: endpoint)
+            showNotice("SSH password cleared.")
+        } catch {
+            present(error)
+        }
+    }
+
     func saveTaggingAPIKey(_ apiKey: String) {
         do {
             try taggingCredentialStore.saveAPIKey(apiKey)
@@ -345,8 +404,20 @@ final class AppServices {
     ) async -> ReaderPresentation? {
         do {
             let url: URL
-            if let cachedURL = paper.cachedPDFURL {
+            if let managedLocalURL = paper.managedPDFLocalURL,
+               FileManager.default.fileExists(atPath: managedLocalURL.path) {
+                url = managedLocalURL
+            } else if let cachedURL = paper.cachedPDFURL,
+                      FileManager.default.fileExists(atPath: cachedURL.path) {
                 url = cachedURL
+            } else if paper.managedPDFRemoteURL != nil {
+                let materializedURL = try await paperStorageService.materializeRemoteManagedPDF(
+                    for: paper,
+                    cacheDirectoryURL: pdfCacheService.cacheDirectoryURL
+                )
+                paper.cachedPDFURL = materializedURL
+                try persistAndSync(allPapers: currentPapers, settings: settings, context: context)
+                url = materializedURL
             } else {
                 url = try await pdfCacheService.cachePDF(for: paper)
                 try persistAndSync(allPapers: currentPapers, settings: settings, context: context)
@@ -368,9 +439,19 @@ final class AppServices {
         allPapers: [Paper],
         settings: UserSettings,
         context: ModelContext
-    ) {
+    ) async {
         do {
             try pdfCacheService.removeCachedPDF(for: paper)
+        } catch {
+            present(error)
+            return
+        }
+
+        if paper.managedPDFLocalURL != nil || paper.managedPDFRemoteURL != nil {
+            try? await paperStorageService.removeManagedPDF(for: paper)
+        }
+
+        do {
             context.delete(paper)
             let remaining = allPapers.filter { $0.id != paper.id }
             try persistAndSync(allPapers: remaining, settings: settings, context: context)
@@ -432,6 +513,37 @@ final class AppServices {
 
     private func present(_ error: Error) {
         presentedError = PresentedError(message: error.localizedDescription)
+    }
+
+    private func combinedNoticeMessages(_ first: String?, _ second: String?) -> String? {
+        let messages = [first, second]
+            .compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { $0.isEmpty == false }
+        guard messages.isEmpty == false else { return nil }
+        return messages.joined(separator: "\n")
+    }
+
+    private func storeManagedPDFIfPossible(for paper: Paper, settings: UserSettings) async -> String? {
+        guard paper.pdfURL != nil else {
+            return nil
+        }
+
+        do {
+            let location = try await paperStorageService.storeManagedPDF(for: paper, settings: settings)
+            switch location {
+            case let .local(url):
+                paper.managedPDFLocalURL = url
+                paper.managedPDFRemoteURL = nil
+            case let .remote(url):
+                paper.managedPDFLocalURL = nil
+                paper.managedPDFRemoteURL = url
+            }
+            return nil
+        } catch {
+            paper.managedPDFLocalURL = nil
+            paper.managedPDFRemoteURL = nil
+            return "Managed PDF storage failed. Imported the paper without a stored PDF copy. \(error.localizedDescription)"
+        }
     }
 
     private func queueSort(lhs: Paper, rhs: Paper) -> Bool {

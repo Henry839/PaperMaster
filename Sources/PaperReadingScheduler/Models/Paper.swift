@@ -14,6 +14,8 @@ final class Paper {
     var sourceURLString: String?
     var pdfURLString: String?
     var cachedPDFPath: String?
+    var managedPDFLocalPath: String?
+    var managedPDFRemoteURLString: String?
     var statusRawValue: String
     var queuePosition: Int
     var dateAdded: Date
@@ -37,6 +39,8 @@ final class Paper {
         sourceURL: URL? = nil,
         pdfURL: URL? = nil,
         cachedPDFPath: String? = nil,
+        managedPDFLocalPath: String? = nil,
+        managedPDFRemoteURLString: String? = nil,
         status: PaperStatus = .inbox,
         queuePosition: Int = 0,
         dateAdded: Date = .now,
@@ -59,6 +63,8 @@ final class Paper {
         self.sourceURLString = sourceURL?.absoluteString
         self.pdfURLString = pdfURL?.absoluteString
         self.cachedPDFPath = cachedPDFPath
+        self.managedPDFLocalPath = managedPDFLocalPath
+        self.managedPDFRemoteURLString = managedPDFRemoteURLString
         self.statusRawValue = status.rawValue
         self.queuePosition = queuePosition
         self.dateAdded = dateAdded
@@ -106,6 +112,21 @@ final class Paper {
         set {
             cachedPDFPath = newValue?.path
         }
+    }
+
+    var managedPDFLocalURL: URL? {
+        get {
+            guard let managedPDFLocalPath else { return nil }
+            return URL(fileURLWithPath: managedPDFLocalPath)
+        }
+        set {
+            managedPDFLocalPath = newValue?.path
+        }
+    }
+
+    var managedPDFRemoteURL: URL? {
+        get { managedPDFRemoteURLString.flatMap(URL.init(string:)) }
+        set { managedPDFRemoteURLString = newValue?.absoluteString }
     }
 
     var tagNames: [String] {

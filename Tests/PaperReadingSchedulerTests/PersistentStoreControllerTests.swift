@@ -50,6 +50,12 @@ final class PersistentStoreControllerTests: XCTestCase {
         XCTAssertEqual(settings.count, 1)
         XCTAssertEqual(settings.first?.papersPerDay, 3)
         XCTAssertEqual(settings.first?.aiTaggingEnabled, true)
+        XCTAssertEqual(settings.first?.paperStorageMode, .defaultLocal)
+        XCTAssertEqual(settings.first?.customPaperStoragePath, "")
+        XCTAssertEqual(settings.first?.remotePaperStorageHost, "")
+        XCTAssertEqual(settings.first?.remotePaperStoragePort, 22)
+        XCTAssertNil(papers.first?.managedPDFLocalURL)
+        XCTAssertNil(papers.first?.managedPDFRemoteURL)
         XCTAssertEqual(feedbackEntries.count, 1)
         XCTAssertEqual(feedbackEntries.first?.screenTitle, AppScreen.queue.title)
 
@@ -66,6 +72,34 @@ final class PersistentStoreControllerTests: XCTestCase {
             )
         )
         XCTAssertTrue(FileManager.default.fileExists(atPath: controller.currentStoreURL.path))
+    }
+
+    func testMakeLaunchSetupMigratesV2StoreToV3StorageDefaults() throws {
+        let rootDirectoryURL = try TestSupport.makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: rootDirectoryURL) }
+
+        let controller = PersistentStoreController(applicationSupportDirectoryURL: rootDirectoryURL)
+        try seedV2Store(at: controller.currentStoreURL)
+
+        let setup = controller.makeLaunchSetup()
+        let context = ModelContext(setup.container)
+        let settings = try context.fetch(FetchDescriptor<UserSettings>())
+        let papers = try context.fetch(FetchDescriptor<Paper>())
+
+        XCTAssertEqual(setup.storeURL?.path, controller.currentStoreURL.path)
+        XCTAssertNil(setup.startupNoticeMessage)
+        XCTAssertNil(setup.startupErrorMessage)
+        XCTAssertEqual(settings.count, 1)
+        XCTAssertEqual(settings.first?.paperStorageMode, .defaultLocal)
+        XCTAssertEqual(settings.first?.customPaperStoragePath, "")
+        XCTAssertEqual(settings.first?.remotePaperStorageHost, "")
+        XCTAssertEqual(settings.first?.remotePaperStoragePort, 22)
+        XCTAssertEqual(settings.first?.remotePaperStorageUsername, "")
+        XCTAssertEqual(settings.first?.remotePaperStorageDirectory, "")
+        XCTAssertEqual(papers.count, 1)
+        XCTAssertNil(papers.first?.managedPDFLocalURL)
+        XCTAssertNil(papers.first?.managedPDFRemoteURL)
+        XCTAssertEqual(papers.first?.cachedPDFURL?.path, "/tmp/cached-v2.pdf")
     }
 
     private func seedLegacyStore(at storeURL: URL) throws {
@@ -137,6 +171,48 @@ final class PersistentStoreControllerTests: XCTestCase {
         context.insert(first)
         context.insert(second)
         context.insert(feedbackEntry)
+        try context.save()
+    }
+
+    private func seedV2Store(at storeURL: URL) throws {
+        try FileManager.default.createDirectory(
+            at: storeURL.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        let schema = Schema(versionedSchema: PaperReadingSchedulerSchemaV2.self)
+        let configuration = ModelConfiguration(
+            "HenryPaper",
+            schema: schema,
+            url: storeURL,
+            cloudKitDatabase: .none
+        )
+        let container = try ModelContainer(for: schema, configurations: configuration)
+        let context = ModelContext(container)
+
+        let settings = PaperReadingSchedulerSchemaV2.UserSettings(
+            papersPerDay: 2,
+            dailyReminderTime: TestSupport.reminderDate(hour: 8, minute: 45),
+            autoCachePDFs: true,
+            defaultImportBehaviorRawValue: ImportBehavior.addToInbox.rawValue,
+            aiTaggingEnabled: false,
+            aiTaggingBaseURLString: "https://api.openai.com/v1",
+            aiTaggingModel: "gpt-4o-mini"
+        )
+        let paper = PaperReadingSchedulerSchemaV2.Paper(
+            title: "V2 Paper",
+            authorsText: "Ada Lovelace",
+            abstractText: "Migrated from V2.",
+            sourceURLString: "https://example.com/v2-paper",
+            pdfURLString: "https://example.com/v2-paper.pdf",
+            cachedPDFPath: "/tmp/cached-v2.pdf",
+            statusRawValue: PaperStatus.scheduled.rawValue,
+            queuePosition: 0,
+            dateAdded: Date(timeIntervalSince1970: 1_700_100_000),
+            notes: "V2 notes"
+        )
+
+        context.insert(settings)
+        context.insert(paper)
         try context.save()
     }
 }

@@ -1,3 +1,4 @@
+import AppKit
 import SwiftData
 import SwiftUI
 
@@ -11,6 +12,8 @@ struct SettingsView: View {
     @Query(sort: \FeedbackEntry.createdAt, order: .reverse) private var feedbackEntries: [FeedbackEntry]
     @State private var taggingAPIKey = ""
     @State private var didLoadTaggingAPIKey = false
+    @State private var paperStoragePassword = ""
+    @State private var hasSavedPaperStoragePassword = false
 
     var body: some View {
         ScrollView {
@@ -19,9 +22,10 @@ struct SettingsView: View {
                     .font(.system(size: 30, weight: .bold, design: .serif))
 
                 readingDefaultsSection
+                paperStorageSection
                 aiTaggingSection
 
-                Text("Core reading data stays local. Scheduling is based on queue order and your papers-per-day target.")
+                Text("Library metadata stays local. New imports use the selected paper storage target, and scheduling still follows queue order and your papers-per-day target.")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
 
@@ -40,6 +44,7 @@ struct SettingsView: View {
         .task {
             guard didLoadTaggingAPIKey == false else { return }
             taggingAPIKey = services.loadTaggingAPIKey()
+            hasSavedPaperStoragePassword = services.hasSavedPaperStoragePassword(for: settings)
             didLoadTaggingAPIKey = true
         }
     }
@@ -73,11 +78,6 @@ struct SettingsView: View {
                 )
             }
 
-            Toggle("Auto-cache PDFs after import", isOn: $settings.autoCachePDFs)
-                .onChange(of: settings.autoCachePDFs) { _, _ in
-                    services.persistNotes(context: modelContext)
-                }
-
             HStack(alignment: .firstTextBaseline) {
                 Text("Default import behavior")
                 Spacer()
@@ -98,6 +98,135 @@ struct SettingsView: View {
                 .labelsHidden()
                 .pickerStyle(.menu)
             }
+        }
+        .padding(20)
+        .frame(maxWidth: .infinity, alignment: .topLeading)
+        .background(.background)
+        .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 20, style: .continuous)
+                .stroke(Color.primary.opacity(0.06), lineWidth: 1)
+        )
+    }
+
+    private var paperStorageSection: some View {
+        let readiness = settings.paperStorageReadiness(
+            defaultDirectoryURL: services.defaultPaperStorageDirectoryURL,
+            hasRemotePassword: hasSavedPaperStoragePassword || typedPaperStoragePasswordIsPresent
+        )
+
+        return VStack(alignment: .leading, spacing: 18) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Paper Storage")
+                    .font(.title3.weight(.semibold))
+                Text("Managed PDF copies are stored during import. Existing stored PDFs stay where they already are.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            }
+
+            HStack(alignment: .firstTextBaseline) {
+                Text("Storage target")
+                Spacer()
+                Picker(
+                    "Storage target",
+                    selection: Binding(
+                        get: { settings.paperStorageMode },
+                        set: { newValue in
+                            settings.paperStorageMode = newValue
+                            persistPaperStorageSettings()
+                        }
+                    )
+                ) {
+                    ForEach(PaperStorageMode.allCases) { mode in
+                        Text(mode.title).tag(mode)
+                    }
+                }
+                .labelsHidden()
+                .pickerStyle(.menu)
+            }
+
+            switch settings.paperStorageMode {
+            case .defaultLocal:
+                LabeledContent("Default folder") {
+                    Text(services.defaultPaperStorageDirectoryPath)
+                        .foregroundStyle(.secondary)
+                        .textSelection(.enabled)
+                }
+            case .customLocal:
+                VStack(alignment: .leading, spacing: 12) {
+                    TextField("Local paper storage folder", text: $settings.customPaperStoragePath)
+                        .textFieldStyle(.roundedBorder)
+                        .onChange(of: settings.customPaperStoragePath) { _, _ in
+                            persistPaperStorageSettings()
+                        }
+
+                    HStack(spacing: 12) {
+                        Button("Choose Folder") {
+                            choosePaperStorageFolder()
+                        }
+
+                        if settings.customPaperStoragePath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false {
+                            Text(settings.customPaperStoragePath)
+                                .font(.footnote)
+                                .foregroundStyle(.secondary)
+                                .textSelection(.enabled)
+                        }
+                    }
+                }
+            case .remoteSSH:
+                VStack(alignment: .leading, spacing: 12) {
+                    TextField("Host", text: $settings.remotePaperStorageHost)
+                        .textFieldStyle(.roundedBorder)
+                        .onChange(of: settings.remotePaperStorageHost) { _, _ in
+                            refreshRemotePaperStorageIdentity()
+                        }
+
+                    TextField("Port", value: $settings.remotePaperStoragePort, format: .number)
+                        .textFieldStyle(.roundedBorder)
+                        .onChange(of: settings.remotePaperStoragePort) { _, _ in
+                            refreshRemotePaperStorageIdentity()
+                        }
+
+                    TextField("Username", text: $settings.remotePaperStorageUsername)
+                        .textFieldStyle(.roundedBorder)
+                        .onChange(of: settings.remotePaperStorageUsername) { _, _ in
+                            refreshRemotePaperStorageIdentity()
+                        }
+
+                    TextField("Remote directory", text: $settings.remotePaperStorageDirectory)
+                        .textFieldStyle(.roundedBorder)
+                        .onChange(of: settings.remotePaperStorageDirectory) { _, _ in
+                            persistPaperStorageSettings()
+                        }
+
+                    HStack(alignment: .center, spacing: 12) {
+                        SecureField("SSH password", text: $paperStoragePassword)
+                            .textFieldStyle(.roundedBorder)
+
+                        Button("Save Password") {
+                            services.savePaperStoragePassword(paperStoragePassword, for: settings)
+                            paperStoragePassword = ""
+                            hasSavedPaperStoragePassword = services.hasSavedPaperStoragePassword(for: settings)
+                        }
+                        .disabled(typedPaperStoragePasswordIsPresent == false)
+
+                        Button("Clear") {
+                            paperStoragePassword = ""
+                            services.clearPaperStoragePassword(for: settings)
+                            hasSavedPaperStoragePassword = false
+                        }
+                        .disabled(hasSavedPaperStoragePassword == false && typedPaperStoragePasswordIsPresent == false)
+                    }
+
+                    Text(hasSavedPaperStoragePassword ? "A password is saved in Keychain for this SSH target." : "No SSH password is saved for this SSH target yet.")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                }
+            }
+
+            Label(readiness.settingsMessage, systemImage: paperStorageReadinessSymbol(for: readiness))
+                .font(.footnote.weight(.semibold))
+                .foregroundStyle(paperStorageReadinessColor(for: readiness))
         }
         .padding(20)
         .frame(maxWidth: .infinity, alignment: .topLeading)
@@ -239,6 +368,48 @@ struct SettingsView: View {
             .green
         case .missingBaseURL, .invalidBaseURL, .missingModel, .missingAPIKey:
             .orange
+        }
+    }
+
+    private func paperStorageReadinessSymbol(for readiness: PaperStorageReadiness) -> String {
+        readiness.isReady ? "checkmark.circle.fill" : "exclamationmark.triangle.fill"
+    }
+
+    private func paperStorageReadinessColor(for readiness: PaperStorageReadiness) -> Color {
+        readiness.isReady ? .green : .orange
+    }
+
+    private var typedPaperStoragePasswordIsPresent: Bool {
+        paperStoragePassword.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+    }
+
+    private func persistPaperStorageSettings() {
+        services.persistNotes(context: modelContext)
+    }
+
+    private func refreshRemotePaperStorageIdentity() {
+        persistPaperStorageSettings()
+        hasSavedPaperStoragePassword = services.hasSavedPaperStoragePassword(for: settings)
+    }
+
+    private func choosePaperStorageFolder() {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = false
+        panel.canChooseDirectories = true
+        panel.canCreateDirectories = true
+        panel.allowsMultipleSelection = false
+        panel.prompt = "Choose"
+
+        let trimmedPath = settings.customPaperStoragePath.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmedPath.isEmpty == false {
+            panel.directoryURL = URL(fileURLWithPath: trimmedPath, isDirectory: true)
+        } else {
+            panel.directoryURL = services.defaultPaperStorageDirectoryURL
+        }
+
+        if panel.runModal() == .OK, let selectedURL = panel.url {
+            settings.customPaperStoragePath = selectedURL.path
+            persistPaperStorageSettings()
         }
     }
 }

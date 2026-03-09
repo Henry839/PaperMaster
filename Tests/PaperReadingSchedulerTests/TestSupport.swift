@@ -103,6 +103,67 @@ final class FakeTextClipboard: TextClipboardWriting, @unchecked Sendable {
     }
 }
 
+final class FakePaperStorageCredentialStore: PaperStorageCredentialStoring, @unchecked Sendable {
+    var storedPasswords: [PaperStorageRemoteEndpoint: String]
+
+    init(storedPasswords: [PaperStorageRemoteEndpoint: String] = [:]) {
+        self.storedPasswords = storedPasswords
+    }
+
+    func loadPassword(for endpoint: PaperStorageRemoteEndpoint) throws -> String? {
+        storedPasswords[endpoint]
+    }
+
+    func savePassword(_ password: String, for endpoint: PaperStorageRemoteEndpoint) throws {
+        let trimmedPassword = password.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmedPassword.isEmpty {
+            storedPasswords.removeValue(forKey: endpoint)
+        } else {
+            storedPasswords[endpoint] = trimmedPassword
+        }
+    }
+
+    func deletePassword(for endpoint: PaperStorageRemoteEndpoint) throws {
+        storedPasswords.removeValue(forKey: endpoint)
+    }
+}
+
+struct RecordedCommandInvocation: Equatable {
+    let executableURL: URL
+    let arguments: [String]
+    let environment: [String: String]
+    let standardInput: Data?
+}
+
+final class RecordingCommandRunner: CommandRunning, @unchecked Sendable {
+    private(set) var invocations: [RecordedCommandInvocation] = []
+    var result = CommandResult(standardOutput: "", standardError: "", terminationStatus: 0)
+    var error: Error?
+
+    func run(
+        executableURL: URL,
+        arguments: [String],
+        environment: [String: String],
+        currentDirectoryURL: URL?,
+        standardInput: Data?
+    ) throws -> CommandResult {
+        invocations.append(
+            RecordedCommandInvocation(
+                executableURL: executableURL,
+                arguments: arguments,
+                environment: environment,
+                standardInput: standardInput
+            )
+        )
+
+        if let error {
+            throw error
+        }
+
+        return result
+    }
+}
+
 struct TestError: LocalizedError {
     let message: String
 

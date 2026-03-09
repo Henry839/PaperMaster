@@ -84,6 +84,101 @@ final class AppServicesTests: XCTestCase {
         XCTAssertEqual(try context.fetchCount(FetchDescriptor<Paper>()), 1)
     }
 
+    func testImportStoresManagedPDFInDefaultLocalStorage() async throws {
+        let container = try TestSupport.makeInMemoryContainer()
+        let context = ModelContext(container)
+        let settings = UserSettings(defaultImportBehavior: .scheduleImmediately)
+        context.insert(settings)
+
+        let storageDirectoryURL = try TestSupport.makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: storageDirectoryURL) }
+
+        let pdfURL = URL(string: "https://example.com/managed-paper.pdf")!
+        let services = AppServices(
+            importService: PaperImportService(
+                metadataResolver: StubMetadataResolver(
+                    metadata: ResolvedPaperMetadata(
+                        title: "Managed Paper",
+                        authors: [],
+                        abstractText: "",
+                        sourceURL: pdfURL,
+                        pdfURL: pdfURL
+                    )
+                )
+            ),
+            paperStorageService: PaperStorageService(
+                networking: StubNetworking { url in
+                    XCTAssertEqual(url, pdfURL)
+                    return (Data("pdf-data".utf8), TestSupport.httpResponse(url: url))
+                },
+                credentialStore: FakePaperStorageCredentialStore(),
+                defaultStorageDirectoryURL: storageDirectoryURL
+            ),
+            reminderService: ReminderService(center: FakeNotificationCenter())
+        )
+
+        let paper = await services.importPaper(
+            request: PaperCaptureRequest(sourceText: pdfURL.absoluteString),
+            settings: settings,
+            currentPapers: [],
+            in: context
+        )
+
+        XCTAssertEqual(paper?.managedPDFLocalURL?.deletingLastPathComponent().path, storageDirectoryURL.path)
+        XCTAssertNil(paper?.managedPDFRemoteURL)
+        XCTAssertEqual(try Data(contentsOf: XCTUnwrap(paper?.managedPDFLocalURL)), Data("pdf-data".utf8))
+    }
+
+    func testImportKeepsPaperWhenManagedStorageFails() async throws {
+        let container = try TestSupport.makeInMemoryContainer()
+        let context = ModelContext(container)
+        let settings = UserSettings(
+            defaultImportBehavior: .scheduleImmediately,
+            paperStorageMode: .remoteSSH,
+            remotePaperStorageHost: "example.com",
+            remotePaperStoragePort: 22,
+            remotePaperStorageUsername: "reader",
+            remotePaperStorageDirectory: "/papers"
+        )
+        context.insert(settings)
+
+        let pdfURL = URL(string: "https://example.com/needs-storage.pdf")!
+        let services = AppServices(
+            importService: PaperImportService(
+                metadataResolver: StubMetadataResolver(
+                    metadata: ResolvedPaperMetadata(
+                        title: "Needs Storage",
+                        authors: [],
+                        abstractText: "",
+                        sourceURL: pdfURL,
+                        pdfURL: pdfURL
+                    )
+                )
+            ),
+            paperStorageService: PaperStorageService(
+                networking: StubNetworking { url in
+                    XCTAssertEqual(url, pdfURL)
+                    return (Data("pdf-data".utf8), TestSupport.httpResponse(url: url))
+                },
+                credentialStore: FakePaperStorageCredentialStore()
+            ),
+            reminderService: ReminderService(center: FakeNotificationCenter())
+        )
+
+        let paper = await services.importPaper(
+            request: PaperCaptureRequest(sourceText: pdfURL.absoluteString),
+            settings: settings,
+            currentPapers: [],
+            in: context
+        )
+
+        XCTAssertNotNil(paper)
+        XCTAssertNil(paper?.managedPDFLocalURL)
+        XCTAssertNil(paper?.managedPDFRemoteURL)
+        XCTAssertEqual(try context.fetchCount(FetchDescriptor<Paper>()), 1)
+        XCTAssertTrue(services.presentedNotice?.message.contains("Managed PDF storage failed.") == true)
+    }
+
     func testCopyTextWritesToClipboardAndShowsNotice() {
         let clipboard = FakeTextClipboard()
         let services = AppServices(
@@ -106,6 +201,38 @@ final class AppServicesTests: XCTestCase {
 
         XCTAssertEqual(clipboard.lastCopiedString, "@article{test}")
         XCTAssertEqual(services.presentedNotice?.message, "Copied BibTeX.")
+    }
+
+    func testPrepareReaderPrefersManagedLocalPDF() async throws {
+        let container = try TestSupport.makeInMemoryContainer()
+        let context = ModelContext(container)
+        let settings = UserSettings()
+        let managedDirectoryURL = try TestSupport.makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: managedDirectoryURL) }
+
+        let managedPDFURL = managedDirectoryURL.appendingPathComponent("managed.pdf")
+        try Data("managed".utf8).write(to: managedPDFURL)
+
+        let paper = Paper(
+            title: "Managed Local",
+            pdfURL: URL(string: "https://example.com/original.pdf"),
+            managedPDFLocalPath: managedPDFURL.path,
+            status: .scheduled
+        )
+        context.insert(settings)
+        context.insert(paper)
+
+        let services = makeServices()
+
+        let presentation = await services.prepareReader(
+            for: paper,
+            currentPapers: [paper],
+            settings: settings,
+            context: context
+        )
+
+        XCTAssertEqual(presentation?.fileURL.path, managedPDFURL.path)
+        XCTAssertNil(paper.cachedPDFURL)
     }
 
     func testMoveToEarlierQueueIndexReordersQueueAndClearsMovedOverride() throws {
@@ -223,7 +350,7 @@ final class AppServicesTests: XCTestCase {
         XCTAssertEqual(third.manualDueDateOverride, bottomOverride)
     }
 
-    func testQueueReorderTagEditAndDeleteRemainStableWithOverlappingTagNames() throws {
+    func testQueueReorderTagEditAndDeleteRemainStableWithOverlappingTagNames() async throws {
         let container = try TestSupport.makeInMemoryContainer()
         let context = ModelContext(container)
         let settings = UserSettings(papersPerDay: 1)
@@ -261,7 +388,7 @@ final class AppServicesTests: XCTestCase {
             settings: settings,
             context: context
         )
-        services.delete(
+        await services.delete(
             paper: second,
             allPapers: [first, second],
             settings: settings,
@@ -277,6 +404,61 @@ final class AppServicesTests: XCTestCase {
         XCTAssertEqual(storedTags.count, 2)
         XCTAssertEqual(Set(storedTags.map(\.name)), Set(["agents", "planning"]))
         XCTAssertTrue(storedTags.allSatisfy { $0.paper?.id == first.id })
+    }
+
+    func testDeleteRemovesPaperEvenWhenManagedRemoteCleanupFails() async throws {
+        let container = try TestSupport.makeInMemoryContainer()
+        let context = ModelContext(container)
+        let settings = UserSettings()
+        let paper = Paper(
+            title: "Remote Managed",
+            managedPDFRemoteURLString: "sftp://reader@example.com:22/papers/remote-managed.pdf",
+            status: .scheduled
+        )
+
+        let credentialStore = FakePaperStorageCredentialStore(
+            storedPasswords: [
+                PaperStorageRemoteEndpoint(host: "example.com", port: 22, username: "reader"): "secret"
+            ]
+        )
+        let commandRunner = RecordingCommandRunner()
+        commandRunner.error = CommandRunnerError.nonZeroExit(
+            executablePath: "/usr/bin/sftp",
+            status: 1,
+            standardError: "permission denied"
+        )
+
+        context.insert(settings)
+        context.insert(paper)
+
+        let services = AppServices(
+            importService: PaperImportService(
+                metadataResolver: StubMetadataResolver(
+                    metadata: ResolvedPaperMetadata(
+                        title: "",
+                        authors: [],
+                        abstractText: "",
+                        sourceURL: nil,
+                        pdfURL: nil
+                    )
+                )
+            ),
+            paperStorageService: PaperStorageService(
+                credentialStore: credentialStore,
+                commandRunner: commandRunner
+            ),
+            reminderService: ReminderService(center: FakeNotificationCenter())
+        )
+
+        await services.delete(
+            paper: paper,
+            allPapers: [paper],
+            settings: settings,
+            context: context
+        )
+
+        XCTAssertEqual(try context.fetchCount(FetchDescriptor<Paper>()), 0)
+        XCTAssertEqual(commandRunner.invocations.count, 1)
     }
 
     private func makeServices() -> AppServices {

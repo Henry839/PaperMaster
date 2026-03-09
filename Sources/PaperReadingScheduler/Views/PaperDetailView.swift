@@ -19,6 +19,7 @@ struct PaperDetailView: View {
                 headerSection
                 quickActionsSection
                 metadataSection
+                storageSection
                 bibtexSection
                 tagsSection
                 abstractSection
@@ -49,16 +50,18 @@ struct PaperDetailView: View {
             titleVisibility: .visible
         ) {
             Button("Delete", role: .destructive) {
-                services.delete(
-                    paper: paper,
-                    allPapers: allPapers,
-                    settings: settings,
-                    context: modelContext
-                )
-                router.selectedPaperID = nil
+                Task {
+                    await services.delete(
+                        paper: paper,
+                        allPapers: allPapers,
+                        settings: settings,
+                        context: modelContext
+                    )
+                    router.selectedPaperID = nil
+                }
             }
         } message: {
-            Text("The cached PDF and scheduled reminders for this paper will be removed.")
+            Text("The managed PDF copy, temporary reader cache, and scheduled reminders for this paper will be removed when possible.")
         }
     }
 
@@ -84,8 +87,18 @@ struct PaperDetailView: View {
                         .foregroundStyle(.secondary)
                 }
 
+                if paper.managedPDFLocalURL != nil {
+                    Label("Stored Locally", systemImage: "externaldrive.fill")
+                        .font(.subheadline)
+                        .foregroundStyle(.green)
+                } else if paper.managedPDFRemoteURL != nil {
+                    Label("Stored Remotely", systemImage: "externaldrive.badge.icloud")
+                        .font(.subheadline)
+                        .foregroundStyle(.green)
+                }
+
                 if paper.cachedPDFURL != nil {
-                    Label("Cached", systemImage: "checkmark.circle.fill")
+                    Label("Reader Cache", systemImage: "checkmark.circle.fill")
                         .font(.subheadline)
                         .foregroundStyle(.green)
                 }
@@ -131,7 +144,7 @@ struct PaperDetailView: View {
                         isOpeningReader = false
                     }
                 }
-                .disabled(isOpeningReader || (paper.pdfURL == nil && paper.cachedPDFURL == nil))
+                .disabled(isOpeningReader || hasReadablePDF == false)
 
                 Button("Open Source") {
                     services.openSource(for: paper)
@@ -238,6 +251,42 @@ struct PaperDetailView: View {
 
             LabeledContent("Added") {
                 Text(paper.dateAdded.formatted(date: .abbreviated, time: .shortened))
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    private var storageSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Storage")
+                .font(.title3.weight(.semibold))
+
+            if let managedPDFLocalURL = paper.managedPDFLocalURL {
+                LabeledContent("Managed PDF") {
+                    Text(managedPDFLocalURL.path)
+                        .foregroundStyle(.secondary)
+                        .textSelection(.enabled)
+                }
+            } else if let managedPDFRemoteURL = paper.managedPDFRemoteURL {
+                LabeledContent("Managed PDF") {
+                    Text(managedPDFRemoteURL.absoluteString)
+                        .foregroundStyle(.secondary)
+                        .textSelection(.enabled)
+                }
+            } else {
+                Text("No managed PDF copy has been saved for this paper yet.")
+                    .foregroundStyle(.secondary)
+            }
+
+            if let cachedPDFURL = paper.cachedPDFURL {
+                LabeledContent("Reader cache") {
+                    Text(cachedPDFURL.path)
+                        .foregroundStyle(.secondary)
+                        .textSelection(.enabled)
+                }
+            } else {
+                Text("The reader cache is created on demand when the paper is opened in-app.")
+                    .font(.footnote)
                     .foregroundStyle(.secondary)
             }
         }
@@ -388,5 +437,14 @@ struct PaperDetailView: View {
 
     private var bibtexText: String {
         paper.bibtex?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+    }
+
+    private var hasReadablePDF: Bool {
+        if let managedPDFLocalURL = paper.managedPDFLocalURL,
+           FileManager.default.fileExists(atPath: managedPDFLocalURL.path) {
+            return true
+        }
+
+        return paper.managedPDFRemoteURL != nil || paper.pdfURL != nil || paper.cachedPDFURL != nil
     }
 }
