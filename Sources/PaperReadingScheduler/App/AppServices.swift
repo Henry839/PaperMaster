@@ -194,14 +194,33 @@ final class AppServices {
         settings: UserSettings,
         context: ModelContext
     ) {
+        let queue = queuedPapers(from: allPapers)
+        guard let currentIndex = queue.firstIndex(where: { $0.id == paper.id }) else { return }
+
+        move(
+            paper: paper,
+            toQueueIndex: currentIndex + offset,
+            allPapers: allPapers,
+            settings: settings,
+            context: context
+        )
+    }
+
+    func move(
+        paper: Paper,
+        toQueueIndex destinationIndex: Int,
+        allPapers: [Paper],
+        settings: UserSettings,
+        context: ModelContext
+    ) {
         var queue = queuedPapers(from: allPapers)
         guard let currentIndex = queue.firstIndex(where: { $0.id == paper.id }) else { return }
 
-        let destinationIndex = min(max(0, currentIndex + offset), queue.count - 1)
-        guard destinationIndex != currentIndex else { return }
+        let normalizedIndex = min(max(0, destinationIndex), queue.count - 1)
+        guard normalizedIndex != currentIndex else { return }
 
         let moved = queue.remove(at: currentIndex)
-        queue.insert(moved, at: destinationIndex)
+        queue.insert(moved, at: normalizedIndex)
 
         for (index, item) in queue.enumerated() {
             item.queuePosition = index

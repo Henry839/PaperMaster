@@ -3,6 +3,9 @@ import SwiftUI
 struct PaperListRow: View {
     let paper: Paper
     let screen: AppScreen
+    var queueRank: Int? = nil
+    var isDragging = false
+    var isDropTarget = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -31,7 +34,7 @@ struct PaperListRow: View {
 
             HStack(spacing: 8) {
                 if screen == .queue {
-                    Text("#\(paper.queuePosition + 1)")
+                    Text("#\(queueRank ?? paper.queuePosition + 1)")
                         .font(.caption)
                         .padding(.horizontal, 8)
                         .padding(.vertical, 4)
@@ -45,6 +48,11 @@ struct PaperListRow: View {
             }
         }
         .padding(.vertical, 6)
+        .padding(.horizontal, 8)
+        .background(rowHighlight)
+        .opacity(isDragging ? 0.58 : 1)
+        .animation(.snappy(duration: 0.18), value: isDragging)
+        .animation(.snappy(duration: 0.18), value: isDropTarget)
     }
 
     private func dueDateLabel(for date: Date) -> String {
@@ -58,6 +66,16 @@ struct PaperListRow: View {
             return "Due today"
         }
         return "Due \(date.formatted(date: .abbreviated, time: .omitted))"
+    }
+
+    @ViewBuilder
+    private var rowHighlight: some View {
+        RoundedRectangle(cornerRadius: 14, style: .continuous)
+            .fill(isDropTarget ? Color.accentColor.opacity(0.12) : Color.clear)
+            .overlay(
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .stroke(isDropTarget ? Color.accentColor.opacity(0.34) : Color.clear, lineWidth: 1.2)
+            )
     }
 }
 

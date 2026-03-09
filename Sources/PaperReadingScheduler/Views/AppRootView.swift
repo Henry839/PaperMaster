@@ -1,5 +1,6 @@
 import SwiftData
 import SwiftUI
+import UniformTypeIdentifiers
 
 struct AppRootView: View {
     @Environment(\.modelContext) private var modelContext
@@ -11,6 +12,9 @@ struct AppRootView: View {
 
     @State private var librarySearch = ""
     @State private var libraryStatusFilter = "all"
+    @State private var draggedQueuePaperID: UUID?
+    @State private var queuePreviewPaperIDs: [UUID]?
+    @State private var queueDropTargetPaperID: UUID?
 
     private var settings: UserSettings? {
         settingsList.first
@@ -59,9 +63,7 @@ struct AppRootView: View {
                 .filter { $0.status == .inbox }
                 .sorted { $0.dateAdded > $1.dateAdded }
         case .queue:
-            return papers
-                .filter { $0.status.isActiveQueue }
-                .sorted(by: queueSort)
+            return queueDisplayPapers
         case .library:
             return papers
                 .filter { $0.status != .archived }
@@ -77,6 +79,23 @@ struct AppRootView: View {
 
     private var displayedPaperIDs: [UUID] {
         displayedPapers.map(\.id)
+    }
+
+    private var queuePapers: [Paper] {
+        papers
+            .filter { $0.status.isActiveQueue }
+            .sorted(by: queueSort)
+    }
+
+    private var queueDisplayPapers: [Paper] {
+        guard let previewIDs = queuePreviewPaperIDs else {
+            return queuePapers
+        }
+
+        let papersByID = Dictionary(uniqueKeysWithValues: queuePapers.map { ($0.id, $0) })
+        let previewPapers = previewIDs.compactMap { papersByID[$0] }
+        let missingPapers = queuePapers.filter { previewIDs.contains($0.id) == false }
+        return previewPapers + missingPapers
     }
 
     var body: some View {
@@ -100,6 +119,9 @@ struct AppRootView: View {
                 syncSelectionIfNeeded()
             }
             .onChange(of: router.selectedScreen) { _, _ in
+                if router.selectedScreen != .queue {
+                    resetQueueDragState()
+                }
                 syncSelectionIfNeeded(forceFirst: true)
             }
             .onChange(of: displayedPaperIDs) { _, _ in
@@ -258,12 +280,21 @@ struct AppRootView: View {
                     get: { router.selectedPaperID },
                     set: { router.selectedPaperID = $0 }
                 )) {
-                    ForEach(displayedPapers) { paper in
-                        PaperListRow(paper: paper, screen: router.selectedScreen)
-                            .tag(Optional(paper.id))
+                    ForEach(Array(displayedPapers.enumerated()), id: \.element.id) { index, paper in
+                        paperRow(for: paper, queueRank: router.selectedScreen == .queue ? index + 1 : nil)
                     }
                 }
                 .listStyle(.inset(alternatesRowBackgrounds: true))
+                .animation(.snappy(duration: 0.18), value: queuePreviewPaperIDs)
+                .onDrop(
+                    of: [UTType.text],
+                    delegate: QueueListDropDelegate(
+                        isQueueScreen: router.selectedScreen == .queue,
+                        hasActiveDrag: draggedQueuePaperID != nil,
+                        commitDrop: commitQueueDrop,
+                        resetDragState: resetQueueDragState
+                    )
+                )
             }
         }
         .padding(20)
@@ -419,5 +450,150 @@ struct AppRootView: View {
         case (.none, .none):
             return queueSort(lhs: lhs, rhs: rhs)
         }
+    }
+
+    @ViewBuilder
+    private func paperRow(for paper: Paper, queueRank: Int?) -> some View {
+        let row = PaperListRow(
+            paper: paper,
+            screen: router.selectedScreen,
+            queueRank: queueRank,
+            isDragging: draggedQueuePaperID == paper.id,
+            isDropTarget: queueDropTargetPaperID == paper.id
+        )
+        .tag(Optional(paper.id))
+        .contentShape(Rectangle())
+
+        if router.selectedScreen == .queue, paper.status.isActiveQueue {
+            row
+                .onDrag { beginQueueDrag(for: paper) }
+                .onDrop(
+                    of: [UTType.text],
+                    delegate: QueueRowDropDelegate(
+                        targetPaperID: paper.id,
+                        draggedPaperID: draggedQueuePaperID,
+                        updatePreview: moveQueuePreview(hoveringOver:),
+                        commitDrop: commitQueueDrop,
+                        clearDropTarget: clearQueueDropTarget(_:)
+                    )
+                )
+        } else {
+            row
+        }
+    }
+
+    private func beginQueueDrag(for paper: Paper) -> NSItemProvider {
+        draggedQueuePaperID = paper.id
+        queuePreviewPaperIDs = queuePapers.map(\.id)
+        queueDropTargetPaperID = nil
+        return NSItemProvider(object: paper.id.uuidString as NSString)
+    }
+
+    private func moveQueuePreview(hoveringOver targetPaperID: UUID) {
+        guard let draggedQueuePaperID else { return }
+
+        if queuePreviewPaperIDs == nil {
+            queuePreviewPaperIDs = queuePapers.map(\.id)
+        }
+
+        guard var previewIDs = queuePreviewPaperIDs,
+              let currentIndex = previewIDs.firstIndex(of: draggedQueuePaperID),
+              let targetIndex = previewIDs.firstIndex(of: targetPaperID) else {
+            return
+        }
+
+        queueDropTargetPaperID = targetPaperID
+
+        guard currentIndex != targetIndex else { return }
+
+        let movedID = previewIDs.remove(at: currentIndex)
+        previewIDs.insert(movedID, at: targetIndex)
+        queuePreviewPaperIDs = previewIDs
+    }
+
+    private func commitQueueDrop() {
+        defer { resetQueueDragState() }
+
+        guard let draggedQueuePaperID,
+              let previewIDs = queuePreviewPaperIDs,
+              let destinationIndex = previewIDs.firstIndex(of: draggedQueuePaperID),
+              let paper = papers.first(where: { $0.id == draggedQueuePaperID }),
+              let settings else {
+            return
+        }
+
+        services.move(
+            paper: paper,
+            toQueueIndex: destinationIndex,
+            allPapers: papers,
+            settings: settings,
+            context: modelContext
+        )
+    }
+
+    private func clearQueueDropTarget(_ targetPaperID: UUID) {
+        guard queueDropTargetPaperID == targetPaperID else { return }
+        queueDropTargetPaperID = nil
+    }
+
+    private func resetQueueDragState() {
+        draggedQueuePaperID = nil
+        queuePreviewPaperIDs = nil
+        queueDropTargetPaperID = nil
+    }
+}
+
+private struct QueueRowDropDelegate: DropDelegate {
+    let targetPaperID: UUID
+    let draggedPaperID: UUID?
+    let updatePreview: (UUID) -> Void
+    let commitDrop: () -> Void
+    let clearDropTarget: (UUID) -> Void
+
+    func validateDrop(info: DropInfo) -> Bool {
+        draggedPaperID != nil
+    }
+
+    func dropEntered(info: DropInfo) {
+        guard draggedPaperID != nil else { return }
+        updatePreview(targetPaperID)
+    }
+
+    func dropUpdated(info: DropInfo) -> DropProposal? {
+        DropProposal(operation: .move)
+    }
+
+    func dropExited(info: DropInfo) {
+        clearDropTarget(targetPaperID)
+    }
+
+    func performDrop(info: DropInfo) -> Bool {
+        commitDrop()
+        return true
+    }
+}
+
+private struct QueueListDropDelegate: DropDelegate {
+    let isQueueScreen: Bool
+    let hasActiveDrag: Bool
+    let commitDrop: () -> Void
+    let resetDragState: () -> Void
+
+    func validateDrop(info: DropInfo) -> Bool {
+        isQueueScreen && hasActiveDrag
+    }
+
+    func dropUpdated(info: DropInfo) -> DropProposal? {
+        DropProposal(operation: .move)
+    }
+
+    func dropExited(info: DropInfo) {
+        resetDragState()
+    }
+
+    func performDrop(info: DropInfo) -> Bool {
+        guard hasActiveDrag else { return false }
+        commitDrop()
+        return true
     }
 }

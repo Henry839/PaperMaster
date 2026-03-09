@@ -154,7 +154,7 @@ struct PaperDetailView: View {
                 Button("Move Up") {
                     services.move(
                         paper: paper,
-                        by: -1,
+                        toQueueIndex: paper.queuePosition - 1,
                         allPapers: allPapers,
                         settings: settings,
                         context: modelContext
@@ -165,7 +165,7 @@ struct PaperDetailView: View {
                 Button("Move Down") {
                     services.move(
                         paper: paper,
-                        by: 1,
+                        toQueueIndex: paper.queuePosition + 1,
                         allPapers: allPapers,
                         settings: settings,
                         context: modelContext

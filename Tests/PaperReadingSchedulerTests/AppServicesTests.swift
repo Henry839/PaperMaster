@@ -107,4 +107,136 @@ final class AppServicesTests: XCTestCase {
         XCTAssertEqual(clipboard.lastCopiedString, "@article{test}")
         XCTAssertEqual(services.presentedNotice?.message, "Copied BibTeX.")
     }
+
+    func testMoveToEarlierQueueIndexReordersQueueAndClearsMovedOverride() throws {
+        let container = try TestSupport.makeInMemoryContainer()
+        let context = ModelContext(container)
+        let settings = UserSettings(papersPerDay: 1)
+        let first = Paper(title: "First", status: .scheduled, queuePosition: 0)
+        let moved = Paper(
+            title: "Moved",
+            status: .scheduled,
+            queuePosition: 1,
+            manualDueDateOverride: TestSupport.reminderDate(hour: 13, minute: 0)
+        )
+        let third = Paper(title: "Third", status: .reading, queuePosition: 2)
+        let inbox = Paper(title: "Inbox", status: .inbox, queuePosition: 99)
+
+        context.insert(settings)
+        context.insert(first)
+        context.insert(moved)
+        context.insert(third)
+        context.insert(inbox)
+
+        let services = makeServices()
+
+        services.move(
+            paper: moved,
+            toQueueIndex: 0,
+            allPapers: [first, moved, third, inbox],
+            settings: settings,
+            context: context
+        )
+
+        let queue = [first, moved, third].sorted { $0.queuePosition < $1.queuePosition }
+        XCTAssertEqual(queue.map(\.id), [moved.id, first.id, third.id])
+        XCTAssertEqual(queue.map(\.queuePosition), [0, 1, 2])
+        XCTAssertNil(moved.manualDueDateOverride)
+    }
+
+    func testMoveToLaterQueueIndexRewritesQueuePositionsContiguously() throws {
+        let container = try TestSupport.makeInMemoryContainer()
+        let context = ModelContext(container)
+        let settings = UserSettings(papersPerDay: 1)
+        let first = Paper(title: "First", status: .scheduled, queuePosition: 0)
+        let second = Paper(title: "Second", status: .scheduled, queuePosition: 1)
+        let third = Paper(title: "Third", status: .scheduled, queuePosition: 2)
+        let fourth = Paper(title: "Fourth", status: .reading, queuePosition: 3)
+
+        context.insert(settings)
+        context.insert(first)
+        context.insert(second)
+        context.insert(third)
+        context.insert(fourth)
+
+        let services = makeServices()
+
+        services.move(
+            paper: first,
+            toQueueIndex: 2,
+            allPapers: [first, second, third, fourth],
+            settings: settings,
+            context: context
+        )
+
+        let queue = [first, second, third, fourth].sorted { $0.queuePosition < $1.queuePosition }
+        XCTAssertEqual(queue.map(\.id), [second.id, third.id, first.id, fourth.id])
+        XCTAssertEqual(queue.map(\.queuePosition), [0, 1, 2, 3])
+    }
+
+    func testMoveToQueueIndexAtBoundsIsNoOp() throws {
+        let container = try TestSupport.makeInMemoryContainer()
+        let context = ModelContext(container)
+        let settings = UserSettings(papersPerDay: 1)
+        let topOverride = TestSupport.reminderDate(hour: 10, minute: 0)
+        let bottomOverride = TestSupport.reminderDate(hour: 16, minute: 0)
+        let first = Paper(
+            title: "First",
+            status: .scheduled,
+            queuePosition: 0,
+            manualDueDateOverride: topOverride
+        )
+        let second = Paper(title: "Second", status: .scheduled, queuePosition: 1)
+        let third = Paper(
+            title: "Third",
+            status: .reading,
+            queuePosition: 2,
+            manualDueDateOverride: bottomOverride
+        )
+
+        context.insert(settings)
+        context.insert(first)
+        context.insert(second)
+        context.insert(third)
+
+        let services = makeServices()
+
+        services.move(
+            paper: first,
+            toQueueIndex: -5,
+            allPapers: [first, second, third],
+            settings: settings,
+            context: context
+        )
+        services.move(
+            paper: third,
+            toQueueIndex: 99,
+            allPapers: [first, second, third],
+            settings: settings,
+            context: context
+        )
+
+        let queue = [first, second, third].sorted { $0.queuePosition < $1.queuePosition }
+        XCTAssertEqual(queue.map(\.id), [first.id, second.id, third.id])
+        XCTAssertEqual(queue.map(\.queuePosition), [0, 1, 2])
+        XCTAssertEqual(first.manualDueDateOverride, topOverride)
+        XCTAssertEqual(third.manualDueDateOverride, bottomOverride)
+    }
+
+    private func makeServices() -> AppServices {
+        AppServices(
+            importService: PaperImportService(
+                metadataResolver: StubMetadataResolver(
+                    metadata: ResolvedPaperMetadata(
+                        title: "",
+                        authors: [],
+                        abstractText: "",
+                        sourceURL: nil,
+                        pdfURL: nil
+                    )
+                )
+            ),
+            reminderService: ReminderService(center: FakeNotificationCenter())
+        )
+    }
 }
