@@ -23,7 +23,7 @@ final class Paper {
     var completedAt: Date?
     var notes: String
     var autoTaggingStatusMessage: String?
-    var tags: [Tag]
+    @Relationship(deleteRule: .cascade, inverse: \Tag.paper) var tags: [Tag]
 
     init(
         id: UUID = UUID(),

@@ -3,10 +3,12 @@ import SwiftData
 
 @Model
 final class Tag {
-    @Attribute(.unique) var name: String
+    var name: String
+    var paper: Paper?
 
-    init(name: String) {
+    init(name: String, paper: Paper? = nil) {
         self.name = Tag.normalize(name)
+        self.paper = paper
     }
 
     static func normalize(_ value: String) -> String {
@@ -21,5 +23,11 @@ final class Tag {
 
     var displayName: String {
         Tag.displayName(for: name)
+    }
+
+    static func buildList(from names: [String]) -> [Tag] {
+        Array(Set(names.map(Tag.normalize).filter { !$0.isEmpty }))
+            .sorted()
+            .map { Tag(name: $0) }
     }
 }

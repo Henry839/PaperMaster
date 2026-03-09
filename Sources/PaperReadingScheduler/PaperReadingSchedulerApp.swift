@@ -1,10 +1,23 @@
+import SwiftData
 import SwiftUI
 
 @main
 struct PaperReadingSchedulerApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
-    @State private var services = AppServices.live()
+    @State private var services: AppServices
     @State private var router = AppRouter()
+    private let modelContainer: ModelContainer
+
+    init() {
+        let setup = PersistentStoreController().makeLaunchSetup()
+        self.modelContainer = setup.container
+        _services = State(
+            initialValue: AppServices.live(
+                startupNoticeMessage: setup.startupNoticeMessage,
+                startupErrorMessage: setup.startupErrorMessage
+            )
+        )
+    }
 
     var body: some Scene {
         WindowGroup {
@@ -15,7 +28,7 @@ struct PaperReadingSchedulerApp: App {
                     appDelegate.router = router
                 }
         }
-        .modelContainer(for: [Paper.self, Tag.self, UserSettings.self, FeedbackEntry.self])
+        .modelContainer(modelContainer)
         .defaultSize(width: 1320, height: 860)
     }
 }

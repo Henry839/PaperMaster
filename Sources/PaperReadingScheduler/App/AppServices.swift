@@ -33,6 +33,8 @@ final class AppServices {
     let reminderService: ReminderService
     let taggingCredentialStore: TaggingCredentialStoring
     let textClipboard: TextClipboardWriting
+    @ObservationIgnored private let startupNoticeMessage: String?
+    @ObservationIgnored private let startupErrorMessage: String?
     @ObservationIgnored private var noticeDismissTask: Task<Void, Never>?
     private(set) var didBootstrap = false
     var presentedError: PresentedError?
@@ -44,7 +46,9 @@ final class AppServices {
         pdfCacheService: PDFCacheService = PDFCacheService(),
         reminderService: ReminderService = ReminderService(),
         taggingCredentialStore: TaggingCredentialStoring = InMemoryTaggingCredentialStore(),
-        textClipboard: TextClipboardWriting = SystemTextClipboardWriter()
+        textClipboard: TextClipboardWriting = SystemTextClipboardWriter(),
+        startupNoticeMessage: String? = nil,
+        startupErrorMessage: String? = nil
     ) {
         self.importService = importService
         self.schedulerService = schedulerService
@@ -52,9 +56,14 @@ final class AppServices {
         self.reminderService = reminderService
         self.taggingCredentialStore = taggingCredentialStore
         self.textClipboard = textClipboard
+        self.startupNoticeMessage = startupNoticeMessage
+        self.startupErrorMessage = startupErrorMessage
     }
 
-    static func live() -> AppServices {
+    static func live(
+        startupNoticeMessage: String? = nil,
+        startupErrorMessage: String? = nil
+    ) -> AppServices {
         let resolver = MetadataResolver()
         let credentialStore = KeychainTaggingCredentialStore()
         return AppServices(
@@ -64,7 +73,9 @@ final class AppServices {
                 tagGenerator: OpenAICompatiblePaperTagger(),
                 credentialStore: credentialStore
             ),
-            taggingCredentialStore: credentialStore
+            taggingCredentialStore: credentialStore,
+            startupNoticeMessage: startupNoticeMessage,
+            startupErrorMessage: startupErrorMessage
         )
     }
 
@@ -76,6 +87,11 @@ final class AppServices {
         schedulerService.applySchedule(to: papers, papersPerDay: settings.papersPerDay)
         try? context.save()
         await reminderService.syncNotifications(for: papers, settings: settings)
+        if let startupErrorMessage {
+            presentedError = PresentedError(message: startupErrorMessage)
+        } else if let startupNoticeMessage {
+            showNotice(startupNoticeMessage)
+        }
         didBootstrap = true
     }
 
@@ -244,7 +260,11 @@ final class AppServices {
         context: ModelContext
     ) {
         do {
-            paper.tags = try resolveTags(from: tagString, in: context)
+            replaceTags(
+                for: paper,
+                with: resolveTags(from: tagString),
+                in: context
+            )
             paper.autoTaggingStatusMessage = nil
             try persistAndSync(allPapers: allPapers, settings: settings, context: context)
         } catch {
@@ -394,35 +414,20 @@ final class AppServices {
         queuedPapers(from: papers).count
     }
 
-    private func resolveTags(from tagString: String, in context: ModelContext) throws -> [Tag] {
-        let normalizedNames = Array(
-            Set(
-                tagString
-                    .split(separator: ",")
-                    .map { Tag.normalize(String($0)) }
-                    .filter { !$0.isEmpty }
-            )
+    private func resolveTags(from tagString: String) -> [Tag] {
+        Tag.buildList(
+            from: tagString
+                .split(separator: ",")
+                .map(String.init)
         )
-        .sorted()
+    }
 
-        guard normalizedNames.isEmpty == false else { return [] }
-
-        let existing = try context.fetch(FetchDescriptor<Tag>())
-        var tagsByName = Dictionary(uniqueKeysWithValues: existing.map { ($0.name, $0) })
-        var resolved: [Tag] = []
-
-        for name in normalizedNames {
-            if let tag = tagsByName[name] {
-                resolved.append(tag)
-            } else {
-                let tag = Tag(name: name)
-                context.insert(tag)
-                tagsByName[name] = tag
-                resolved.append(tag)
-            }
+    private func replaceTags(for paper: Paper, with tags: [Tag], in context: ModelContext) {
+        let previousTags = paper.tags
+        paper.tags = tags
+        for previousTag in previousTags {
+            context.delete(previousTag)
         }
-
-        return resolved
     }
 
     private func present(_ error: Error) {

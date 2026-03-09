@@ -223,6 +223,62 @@ final class AppServicesTests: XCTestCase {
         XCTAssertEqual(third.manualDueDateOverride, bottomOverride)
     }
 
+    func testQueueReorderTagEditAndDeleteRemainStableWithOverlappingTagNames() throws {
+        let container = try TestSupport.makeInMemoryContainer()
+        let context = ModelContext(container)
+        let settings = UserSettings(papersPerDay: 1)
+        let first = Paper(
+            title: "First",
+            status: .scheduled,
+            queuePosition: 0,
+            tags: Tag.buildList(from: ["agents"])
+        )
+        let second = Paper(
+            title: "Second",
+            status: .scheduled,
+            queuePosition: 1,
+            tags: Tag.buildList(from: ["agents"])
+        )
+
+        context.insert(settings)
+        context.insert(first)
+        context.insert(second)
+        try context.save()
+
+        let services = makeServices()
+
+        services.move(
+            paper: second,
+            toQueueIndex: 0,
+            allPapers: [first, second],
+            settings: settings,
+            context: context
+        )
+        services.updateTags(
+            for: first,
+            tagString: "agents, planning",
+            allPapers: [first, second],
+            settings: settings,
+            context: context
+        )
+        services.delete(
+            paper: second,
+            allPapers: [first, second],
+            settings: settings,
+            context: context
+        )
+
+        let storedPapers = try context.fetch(FetchDescriptor<Paper>())
+        let storedTags = try context.fetch(FetchDescriptor<Tag>())
+
+        XCTAssertEqual(storedPapers.map(\.id), [first.id])
+        XCTAssertEqual(first.queuePosition, 0)
+        XCTAssertEqual(Set(first.tagNames), Set(["agents", "planning"]))
+        XCTAssertEqual(storedTags.count, 2)
+        XCTAssertEqual(Set(storedTags.map(\.name)), Set(["agents", "planning"]))
+        XCTAssertTrue(storedTags.allSatisfy { $0.paper?.id == first.id })
+    }
+
     private func makeServices() -> AppServices {
         AppServices(
             importService: PaperImportService(

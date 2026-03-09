@@ -163,4 +163,11 @@ enum TestSupport {
     ) -> HTTPURLResponse {
         HTTPURLResponse(url: url, statusCode: statusCode, httpVersion: nil, headerFields: nil)!
     }
+
+    static func makeTemporaryDirectory() throws -> URL {
+        let directoryURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("PaperReadingSchedulerTests-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directoryURL, withIntermediateDirectories: true)
+        return directoryURL
+    }
 }

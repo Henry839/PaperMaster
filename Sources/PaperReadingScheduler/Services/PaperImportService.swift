@@ -128,7 +128,7 @@ struct PaperImportService {
             autoTaggingStatusMessage: autoTaggingOutcome.statusMessage
         )
         let resolvedTagNames = Array(Set(request.tagNames + autoTaggingOutcome.tagNames)).sorted()
-        paper.tags = try resolveTags(named: resolvedTagNames, in: context)
+        paper.tags = Tag.buildList(from: resolvedTagNames)
         context.insert(paper)
         return PaperImportResult(
             paper: paper,
@@ -176,29 +176,15 @@ struct PaperImportService {
         paper.sourceURL = draft.sourceURL
         paper.pdfURL = draft.pdfURL
         paper.autoTaggingStatusMessage = nil
-        paper.tags = try resolveTags(named: request.tagNames, in: context)
+        replaceTags(for: paper, with: Tag.buildList(from: request.tagNames), in: context)
     }
 
-    private func resolveTags(named names: [String], in context: ModelContext) throws -> [Tag] {
-        let normalizedNames = Array(Set(names.map(Tag.normalize).filter { !$0.isEmpty })).sorted()
-        guard !normalizedNames.isEmpty else { return [] }
-
-        let existing = try context.fetch(FetchDescriptor<Tag>())
-        var tagsByName = Dictionary(uniqueKeysWithValues: existing.map { ($0.name, $0) })
-        var resolved: [Tag] = []
-
-        for name in normalizedNames {
-            if let existingTag = tagsByName[name] {
-                resolved.append(existingTag)
-            } else {
-                let newTag = Tag(name: name)
-                context.insert(newTag)
-                tagsByName[name] = newTag
-                resolved.append(newTag)
-            }
+    private func replaceTags(for paper: Paper, with tags: [Tag], in context: ModelContext) {
+        let previousTags = paper.tags
+        paper.tags = tags
+        for previousTag in previousTags {
+            context.delete(previousTag)
         }
-
-        return resolved
     }
 
     private func findDuplicatePaper(
@@ -298,7 +284,7 @@ struct PaperImportService {
             }
 
             do {
-                let existingTags = try context.fetch(FetchDescriptor<Tag>()).map(\.name).sorted()
+                let existingTags = Array(Set(try context.fetch(FetchDescriptor<Tag>()).map(\.name))).sorted()
                 let generatedTags = try await tagGenerator.generateTags(
                     for: PaperTaggingInput(
                         title: trimmedTitle,
