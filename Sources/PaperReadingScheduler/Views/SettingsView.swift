@@ -10,6 +10,8 @@ struct SettingsView: View {
     let allPapers: [Paper]
 
     @Query(sort: \FeedbackEntry.createdAt, order: .reverse) private var feedbackEntries: [FeedbackEntry]
+    @State private var taggingAPIKey = ""
+    @State private var didLoadTaggingAPIKey = false
 
     var body: some View {
         ScrollView {
@@ -18,8 +20,9 @@ struct SettingsView: View {
                     .font(.system(size: 30, weight: .bold, design: .serif))
 
                 readingDefaultsSection
+                aiTaggingSection
 
-                Text("v1 is local-only. Scheduling is based on queue order and your papers-per-day target.")
+                Text("Core reading data stays local. Scheduling is based on queue order and your papers-per-day target.")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
 
@@ -35,6 +38,11 @@ struct SettingsView: View {
                 endPoint: .bottomTrailing
             )
         )
+        .task {
+            guard didLoadTaggingAPIKey == false else { return }
+            taggingAPIKey = services.loadTaggingAPIKey()
+            didLoadTaggingAPIKey = true
+        }
     }
 
     private var readingDefaultsSection: some View {
@@ -102,6 +110,69 @@ struct SettingsView: View {
         )
     }
 
+    private var aiTaggingSection: some View {
+        let readiness = settings.aiTaggingReadiness(apiKey: taggingAPIKey)
+
+        return VStack(alignment: .leading, spacing: 18) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text("AI Tagging")
+                    .font(.title3.weight(.semibold))
+                Text("Generate tags automatically during import using an OpenAI-compatible provider.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            }
+
+            Toggle("Automatically generate tags on import", isOn: $settings.aiTaggingEnabled)
+                .onChange(of: settings.aiTaggingEnabled) { _, _ in
+                    services.persistNotes(context: modelContext)
+                }
+
+            TextField("Base URL", text: $settings.aiTaggingBaseURLString)
+                .textFieldStyle(.roundedBorder)
+                .onChange(of: settings.aiTaggingBaseURLString) { _, _ in
+                    services.persistNotes(context: modelContext)
+                }
+
+            TextField("Model", text: $settings.aiTaggingModel)
+                .textFieldStyle(.roundedBorder)
+                .onChange(of: settings.aiTaggingModel) { _, _ in
+                    services.persistNotes(context: modelContext)
+                }
+
+            HStack(alignment: .center, spacing: 12) {
+                SecureField("API key", text: $taggingAPIKey)
+                    .textFieldStyle(.roundedBorder)
+
+                Button("Save Key") {
+                    services.saveTaggingAPIKey(taggingAPIKey)
+                    taggingAPIKey = services.loadTaggingAPIKey()
+                }
+
+                Button("Clear") {
+                    taggingAPIKey = ""
+                    services.saveTaggingAPIKey("")
+                }
+                .disabled(taggingAPIKey.isEmpty)
+            }
+
+            Label(readiness.settingsMessage, systemImage: readinessSymbol(for: readiness))
+                .font(.footnote.weight(.semibold))
+                .foregroundStyle(readinessColor(for: readiness))
+
+            Text("Only new imports are auto-tagged. Existing papers keep their tags unless you edit them manually.")
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+        }
+        .padding(20)
+        .frame(maxWidth: .infinity, alignment: .topLeading)
+        .background(.background)
+        .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 20, style: .continuous)
+                .stroke(Color.primary.opacity(0.06), lineWidth: 1)
+        )
+    }
+
     private var feedbackLogSection: some View {
         VStack(alignment: .leading, spacing: 18) {
             HStack(alignment: .top) {
@@ -155,6 +226,28 @@ struct SettingsView: View {
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(text, forType: .string)
         services.showNotice(notice)
+    }
+
+    private func readinessSymbol(for readiness: AITaggingReadiness) -> String {
+        switch readiness {
+        case .disabled:
+            "bolt.slash"
+        case .ready:
+            "checkmark.circle.fill"
+        case .missingBaseURL, .invalidBaseURL, .missingModel, .missingAPIKey:
+            "exclamationmark.triangle.fill"
+        }
+    }
+
+    private func readinessColor(for readiness: AITaggingReadiness) -> Color {
+        switch readiness {
+        case .disabled:
+            .secondary
+        case .ready:
+            .green
+        case .missingBaseURL, .invalidBaseURL, .missingModel, .missingAPIKey:
+            .orange
+        }
     }
 }
 

@@ -13,7 +13,6 @@ struct ImportPaperSheet: View {
     @State private var manualTitle = ""
     @State private var manualAuthors = ""
     @State private var manualAbstract = ""
-    @State private var tags = ""
     @State private var importBehavior: ImportBehavior
     @State private var isImporting = false
 
@@ -37,9 +36,11 @@ struct ImportPaperSheet: View {
                 Section("Manual Metadata") {
                     TextField("Title", text: $manualTitle)
                     TextField("Authors (comma separated)", text: $manualAuthors)
-                    TextField("Tags (comma separated)", text: $tags)
                     TextField("Abstract", text: $manualAbstract, axis: .vertical)
                         .lineLimit(4...8)
+                    Text(tagHelperText)
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
                 }
 
                 Section("Import Behavior") {
@@ -69,10 +70,6 @@ struct ImportPaperSheet: View {
                                 manualTitle: manualTitle,
                                 manualAuthors: manualAuthors,
                                 manualAbstract: manualAbstract,
-                                tagNames: tags
-                                    .split(separator: ",")
-                                    .map { String($0).trimmingCharacters(in: .whitespacesAndNewlines) }
-                                    .filter { !$0.isEmpty },
                                 preferredBehavior: importBehavior
                             )
 
@@ -94,5 +91,11 @@ struct ImportPaperSheet: View {
             }
         }
         .frame(minWidth: 560, minHeight: 520)
+    }
+
+    private var tagHelperText: String {
+        settings.aiTaggingEnabled
+            ? "Tags will be generated automatically from the paper title and abstract when AI auto-tagging is ready."
+            : "Configure AI auto-tagging in Settings to generate tags automatically during import."
     }
 }

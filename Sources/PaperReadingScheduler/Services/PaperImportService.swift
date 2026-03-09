@@ -39,6 +39,11 @@ struct PaperCaptureRequest: Sendable {
     }
 }
 
+struct PaperImportResult {
+    let paper: Paper
+    let notice: String?
+}
+
 enum PaperImportError: LocalizedError {
     case invalidSourceURL
     case missingTitle
@@ -56,9 +61,17 @@ enum PaperImportError: LocalizedError {
 @MainActor
 struct PaperImportService {
     let metadataResolver: MetadataResolving
+    let tagGenerator: PaperTagGenerating?
+    let credentialStore: TaggingCredentialStoring
 
-    init(metadataResolver: MetadataResolving) {
+    init(
+        metadataResolver: MetadataResolving,
+        tagGenerator: PaperTagGenerating? = nil,
+        credentialStore: TaggingCredentialStoring = InMemoryTaggingCredentialStore()
+    ) {
         self.metadataResolver = metadataResolver
+        self.tagGenerator = tagGenerator
+        self.credentialStore = credentialStore
     }
 
     func createPaper(
@@ -66,7 +79,7 @@ struct PaperImportService {
         settings: UserSettings,
         in context: ModelContext,
         now: Date = .now
-    ) async throws -> Paper {
+    ) async throws -> PaperImportResult {
         var draft = PaperDraft()
 
         if let sourceURL = request.sourceURL {
@@ -84,6 +97,7 @@ struct PaperImportService {
         }
 
         let status = (request.preferredBehavior ?? settings.defaultImportBehavior) == .scheduleImmediately ? PaperStatus.scheduled : .inbox
+        let autoTaggingOutcome = await generateAutomaticTags(for: draft, settings: settings, in: context)
         let paper = Paper(
             title: draft.title,
             authors: draft.authors,
@@ -95,9 +109,10 @@ struct PaperImportService {
             dateAdded: now,
             notes: ""
         )
-        paper.tags = try resolveTags(named: request.tagNames, in: context)
+        let resolvedTagNames = Array(Set(request.tagNames + autoTaggingOutcome.tagNames)).sorted()
+        paper.tags = try resolveTags(named: resolvedTagNames, in: context)
         context.insert(paper)
-        return paper
+        return PaperImportResult(paper: paper, notice: autoTaggingOutcome.notice)
     }
 
     func updatePaper(
@@ -155,6 +170,63 @@ struct PaperImportService {
         }
 
         return resolved
+    }
+
+    private func generateAutomaticTags(
+        for draft: PaperDraft,
+        settings: UserSettings,
+        in context: ModelContext
+    ) async -> AutoTaggingOutcome {
+        guard settings.aiTaggingEnabled else {
+            return AutoTaggingOutcome()
+        }
+
+        let storedAPIKey: String?
+        do {
+            storedAPIKey = try credentialStore.loadAPIKey()
+        } catch {
+            return AutoTaggingOutcome(
+                notice: "AI auto-tagging could not access the saved API key. Imported without generated tags."
+            )
+        }
+
+        let readiness = settings.aiTaggingReadiness(apiKey: storedAPIKey)
+
+        switch readiness {
+        case .disabled:
+            return AutoTaggingOutcome()
+        case let .ready(configuration):
+            guard let tagGenerator else {
+                return AutoTaggingOutcome(
+                    notice: "AI auto-tagging is enabled but not available. Imported without generated tags."
+                )
+            }
+
+            let trimmedTitle = draft.title.trimmingCharacters(in: .whitespacesAndNewlines)
+            let trimmedAbstract = draft.abstractText.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard trimmedTitle.isEmpty == false || trimmedAbstract.isEmpty == false else {
+                return AutoTaggingOutcome()
+            }
+
+            do {
+                let existingTags = try context.fetch(FetchDescriptor<Tag>()).map(\.name).sorted()
+                let generatedTags = try await tagGenerator.generateTags(
+                    for: PaperTaggingInput(
+                        title: trimmedTitle,
+                        abstractText: trimmedAbstract,
+                        existingTags: existingTags
+                    ),
+                    configuration: configuration
+                )
+                return AutoTaggingOutcome(tagNames: generatedTags)
+            } catch {
+                return AutoTaggingOutcome(
+                    notice: "AI auto-tagging failed. Imported without generated tags."
+                )
+            }
+        case .missingBaseURL, .invalidBaseURL, .missingModel, .missingAPIKey:
+            return AutoTaggingOutcome(notice: readiness.importNotice)
+        }
     }
 }
 
@@ -231,4 +303,15 @@ private struct PaperDraft {
             pdfURL = sourceURL
         }
     }
+}
+
+private struct AutoTaggingOutcome {
+    var tagNames: [String] = []
+    var notice: String? = nil
+}
+
+struct InMemoryTaggingCredentialStore: TaggingCredentialStoring {
+    func loadAPIKey() throws -> String? { nil }
+    func saveAPIKey(_ apiKey: String) throws {}
+    func deleteAPIKey() throws {}
 }

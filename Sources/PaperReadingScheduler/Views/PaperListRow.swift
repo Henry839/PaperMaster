@@ -40,13 +40,7 @@ struct PaperListRow: View {
                 }
 
                 ForEach(Array(paper.tagNames.prefix(3)), id: \.self) { tag in
-                    Text(tag)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 4)
-                        .background(Color.accentColor.opacity(0.10))
-                        .clipShape(Capsule())
+                    TagChip(name: tag)
                 }
             }
         }

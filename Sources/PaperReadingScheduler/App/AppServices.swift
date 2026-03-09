@@ -20,6 +20,7 @@ final class AppServices {
     let schedulerService: SchedulerService
     let pdfCacheService: PDFCacheService
     let reminderService: ReminderService
+    let taggingCredentialStore: TaggingCredentialStoring
     @ObservationIgnored private var noticeDismissTask: Task<Void, Never>?
     private(set) var didBootstrap = false
     var presentedError: PresentedError?
@@ -29,17 +30,27 @@ final class AppServices {
         importService: PaperImportService,
         schedulerService: SchedulerService = SchedulerService(),
         pdfCacheService: PDFCacheService = PDFCacheService(),
-        reminderService: ReminderService = ReminderService()
+        reminderService: ReminderService = ReminderService(),
+        taggingCredentialStore: TaggingCredentialStoring = InMemoryTaggingCredentialStore()
     ) {
         self.importService = importService
         self.schedulerService = schedulerService
         self.pdfCacheService = pdfCacheService
         self.reminderService = reminderService
+        self.taggingCredentialStore = taggingCredentialStore
     }
 
     static func live() -> AppServices {
         let resolver = MetadataResolver()
-        return AppServices(importService: PaperImportService(metadataResolver: resolver))
+        let credentialStore = KeychainTaggingCredentialStore()
+        return AppServices(
+            importService: PaperImportService(
+                metadataResolver: resolver,
+                tagGenerator: OpenAICompatiblePaperTagger(),
+                credentialStore: credentialStore
+            ),
+            taggingCredentialStore: credentialStore
+        )
     }
 
     func bootstrap(in context: ModelContext, settings existingSettings: [UserSettings], papers: [Paper]) async {
@@ -72,7 +83,8 @@ final class AppServices {
         in context: ModelContext
     ) async -> Paper? {
         do {
-            let paper = try await importService.createPaper(from: request, settings: settings, in: context)
+            let result = try await importService.createPaper(from: request, settings: settings, in: context)
+            let paper = result.paper
             paper.manualDueDateOverride = nil
             if paper.status.isActiveQueue {
                 paper.queuePosition = nextQueuePosition(in: currentPapers + [paper])
@@ -81,6 +93,9 @@ final class AppServices {
                 _ = try? await pdfCacheService.cachePDF(for: paper)
             }
             try persistAndSync(allPapers: currentPapers + [paper], settings: settings, context: context)
+            if let notice = result.notice {
+                showNotice(notice)
+            }
             return paper
         } catch {
             present(error)
@@ -211,6 +226,25 @@ final class AppServices {
     func persistNotes(context: ModelContext) {
         do {
             try context.save()
+        } catch {
+            present(error)
+        }
+    }
+
+    func loadTaggingAPIKey() -> String {
+        do {
+            return try taggingCredentialStore.loadAPIKey() ?? ""
+        } catch {
+            present(error)
+            return ""
+        }
+    }
+
+    func saveTaggingAPIKey(_ apiKey: String) {
+        do {
+            try taggingCredentialStore.saveAPIKey(apiKey)
+            let trimmedAPIKey = apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
+            showNotice(trimmedAPIKey.isEmpty ? "AI API key cleared." : "AI API key saved.")
         } catch {
             present(error)
         }

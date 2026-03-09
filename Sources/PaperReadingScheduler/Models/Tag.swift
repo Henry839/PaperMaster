@@ -15,7 +15,11 @@ final class Tag {
             .lowercased()
     }
 
+    static func displayName(for value: String) -> String {
+        normalize(value).replacingOccurrences(of: "-", with: " ")
+    }
+
     var displayName: String {
-        name.replacingOccurrences(of: "-", with: " ")
+        Tag.displayName(for: name)
     }
 }

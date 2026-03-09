@@ -230,10 +230,30 @@ struct PaperDetailView: View {
         VStack(alignment: .leading, spacing: 12) {
             Text("Tags")
                 .font(.title3.weight(.semibold))
+            if paper.tagNames.isEmpty {
+                Text("No tags yet. New imports can generate them automatically when AI auto-tagging is configured.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            } else {
+                LazyVGrid(
+                    columns: [GridItem(.adaptive(minimum: 110), spacing: 8, alignment: .leading)],
+                    alignment: .leading,
+                    spacing: 8
+                ) {
+                    ForEach(paper.tagNames, id: \.self) { tag in
+                        TagChip(name: tag)
+                    }
+                }
+            }
+
+            Text("AI generates tags on import. Edit them here if you want to override the saved tags.")
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+
             TextField("agents, llms, optimization", text: $tagEditorText)
                 .textFieldStyle(.roundedBorder)
             HStack {
-                Button("Apply Tags") {
+                Button("Save Tags") {
                     services.updateTags(
                         for: paper,
                         tagString: tagEditorText,
