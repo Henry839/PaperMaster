@@ -85,6 +85,12 @@ final class AppServices {
         do {
             let result = try await importService.createPaper(from: request, settings: settings, in: context)
             let paper = result.paper
+            if result.didCreatePaper == false {
+                if let notice = result.notice {
+                    showNotice(notice)
+                }
+                return paper
+            }
             paper.manualDueDateOverride = nil
             if paper.status.isActiveQueue {
                 paper.queuePosition = nextQueuePosition(in: currentPapers + [paper])
@@ -205,6 +211,7 @@ final class AppServices {
     ) {
         do {
             paper.tags = try resolveTags(from: tagString, in: context)
+            paper.autoTaggingStatusMessage = nil
             try persistAndSync(allPapers: allPapers, settings: settings, context: context)
         } catch {
             present(error)

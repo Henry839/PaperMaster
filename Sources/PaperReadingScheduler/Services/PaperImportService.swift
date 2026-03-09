@@ -42,6 +42,7 @@ struct PaperCaptureRequest: Sendable {
 struct PaperImportResult {
     let paper: Paper
     let notice: String?
+    let didCreatePaper: Bool
 }
 
 enum PaperImportError: LocalizedError {
@@ -96,6 +97,14 @@ struct PaperImportService {
             throw PaperImportError.missingTitle
         }
 
+        if let existingPaper = try findDuplicatePaper(for: draft, request: request, in: context) {
+            return PaperImportResult(
+                paper: existingPaper,
+                notice: "That paper is already in your library.",
+                didCreatePaper: false
+            )
+        }
+
         let status = (request.preferredBehavior ?? settings.defaultImportBehavior) == .scheduleImmediately ? PaperStatus.scheduled : .inbox
         let autoTaggingOutcome = await generateAutomaticTags(for: draft, settings: settings, in: context)
         let paper = Paper(
@@ -107,12 +116,17 @@ struct PaperImportService {
             status: status,
             queuePosition: 0,
             dateAdded: now,
-            notes: ""
+            notes: "",
+            autoTaggingStatusMessage: autoTaggingOutcome.statusMessage
         )
         let resolvedTagNames = Array(Set(request.tagNames + autoTaggingOutcome.tagNames)).sorted()
         paper.tags = try resolveTags(named: resolvedTagNames, in: context)
         context.insert(paper)
-        return PaperImportResult(paper: paper, notice: autoTaggingOutcome.notice)
+        return PaperImportResult(
+            paper: paper,
+            notice: autoTaggingOutcome.notice,
+            didCreatePaper: true
+        )
     }
 
     func updatePaper(
@@ -147,6 +161,7 @@ struct PaperImportService {
         paper.abstractText = draft.abstractText
         paper.sourceURL = draft.sourceURL
         paper.pdfURL = draft.pdfURL
+        paper.autoTaggingStatusMessage = nil
         paper.tags = try resolveTags(named: request.tagNames, in: context)
     }
 
@@ -172,6 +187,38 @@ struct PaperImportService {
         return resolved
     }
 
+    private func findDuplicatePaper(
+        for draft: PaperDraft,
+        request: PaperCaptureRequest,
+        in context: ModelContext
+    ) throws -> Paper? {
+        let candidateKeys = paperIdentityKeys(for: draft, request: request)
+        guard candidateKeys.isEmpty == false else { return nil }
+
+        let existingPapers = try context.fetch(FetchDescriptor<Paper>())
+        return existingPapers.first { paper in
+            candidateKeys.isDisjoint(with: paper.paperIdentityKeys) == false
+        }
+    }
+
+    private func paperIdentityKeys(for draft: PaperDraft, request: PaperCaptureRequest) -> Set<String> {
+        var keys: Set<String> = []
+
+        if let requestSourceURL = request.sourceURL {
+            keys.formUnion(requestSourceURL.canonicalPaperIdentityKeys)
+        }
+
+        if let sourceURL = draft.sourceURL {
+            keys.formUnion(sourceURL.canonicalPaperIdentityKeys)
+        }
+
+        if let pdfURL = draft.pdfURL {
+            keys.formUnion(pdfURL.canonicalPaperIdentityKeys)
+        }
+
+        return keys
+    }
+
     private func generateAutomaticTags(
         for draft: PaperDraft,
         settings: UserSettings,
@@ -186,7 +233,8 @@ struct PaperImportService {
             storedAPIKey = try credentialStore.loadAPIKey()
         } catch {
             return AutoTaggingOutcome(
-                notice: "AI auto-tagging could not access the saved API key. Imported without generated tags."
+                notice: "AI auto-tagging could not access the saved API key. Imported without generated tags.",
+                statusMessage: "AI auto-tagging could not access the saved API key: \(error.localizedDescription)"
             )
         }
 
@@ -198,7 +246,8 @@ struct PaperImportService {
         case let .ready(configuration):
             guard let tagGenerator else {
                 return AutoTaggingOutcome(
-                    notice: "AI auto-tagging is enabled but not available. Imported without generated tags."
+                    notice: "AI auto-tagging is enabled but not available. Imported without generated tags.",
+                    statusMessage: "AI auto-tagging is enabled, but no tag generator is available in this build."
                 )
             }
 
@@ -220,12 +269,17 @@ struct PaperImportService {
                 )
                 return AutoTaggingOutcome(tagNames: generatedTags)
             } catch {
+                let message = error.localizedDescription.trimmingCharacters(in: .whitespacesAndNewlines)
                 return AutoTaggingOutcome(
-                    notice: "AI auto-tagging failed. Imported without generated tags."
+                    notice: "AI auto-tagging failed. Imported without generated tags.",
+                    statusMessage: message.isEmpty ? "AI auto-tagging failed for an unknown reason." : "AI auto-tagging failed: \(message)"
                 )
             }
         case .missingBaseURL, .invalidBaseURL, .missingModel, .missingAPIKey:
-            return AutoTaggingOutcome(notice: readiness.importNotice)
+            return AutoTaggingOutcome(
+                notice: readiness.importNotice,
+                statusMessage: readiness.importNotice
+            )
         }
     }
 }
@@ -308,6 +362,7 @@ private struct PaperDraft {
 private struct AutoTaggingOutcome {
     var tagNames: [String] = []
     var notice: String? = nil
+    var statusMessage: String? = nil
 }
 
 struct InMemoryTaggingCredentialStore: TaggingCredentialStoring {

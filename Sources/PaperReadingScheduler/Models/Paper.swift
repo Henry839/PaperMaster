@@ -18,6 +18,7 @@ final class Paper {
     var startedAt: Date?
     var completedAt: Date?
     var notes: String
+    var autoTaggingStatusMessage: String?
     var tags: [Tag]
 
     init(
@@ -36,6 +37,7 @@ final class Paper {
         startedAt: Date? = nil,
         completedAt: Date? = nil,
         notes: String = "",
+        autoTaggingStatusMessage: String? = nil,
         tags: [Tag] = []
     ) {
         self.id = id
@@ -53,6 +55,7 @@ final class Paper {
         self.startedAt = startedAt
         self.completedAt = completedAt
         self.notes = notes
+        self.autoTaggingStatusMessage = autoTaggingStatusMessage
         self.tags = tags
     }
 
@@ -122,5 +125,19 @@ final class Paper {
         .lowercased()
 
         return haystack.contains(trimmed.lowercased())
+    }
+
+    var paperIdentityKeys: Set<String> {
+        var keys: Set<String> = []
+
+        if let sourceURL {
+            keys.formUnion(sourceURL.canonicalPaperIdentityKeys)
+        }
+
+        if let pdfURL {
+            keys.formUnion(pdfURL.canonicalPaperIdentityKeys)
+        }
+
+        return keys
     }
 }

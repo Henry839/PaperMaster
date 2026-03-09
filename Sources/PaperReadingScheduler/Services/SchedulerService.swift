@@ -63,7 +63,7 @@ struct SchedulerService: Sendable {
 
         for (index, item) in activeItems.enumerated() {
             let normalizedDueDate = item.dueDate.map { calendar.startOfDay(for: $0) }
-            let shouldLock = item.status == .reading || (normalizedDueDate != nil && normalizedDueDate! <= today)
+            let shouldLock = item.status == .reading || (normalizedDueDate != nil && normalizedDueDate! < today)
             guard shouldLock else { continue }
 
             let lockedDate = normalizedDueDate ?? today

@@ -246,6 +246,23 @@ struct PaperDetailView: View {
                 }
             }
 
+            if let autoTaggingStatusMessage = paper.autoTaggingStatusMessage,
+               autoTaggingStatusMessage.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false {
+                VStack(alignment: .leading, spacing: 6) {
+                    Label("Last auto-tagging result", systemImage: "exclamationmark.triangle.fill")
+                        .font(.footnote.weight(.semibold))
+                        .foregroundStyle(.orange)
+                    Text(autoTaggingStatusMessage)
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                        .textSelection(.enabled)
+                }
+                .padding(12)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(Color.orange.opacity(0.08))
+                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+            }
+
             Text("AI generates tags on import. Edit them here if you want to override the saved tags.")
                 .font(.footnote)
                 .foregroundStyle(.secondary)

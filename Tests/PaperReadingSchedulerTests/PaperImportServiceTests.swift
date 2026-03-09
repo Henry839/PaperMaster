@@ -134,6 +134,7 @@ final class PaperImportServiceTests: XCTestCase {
         XCTAssertEqual(result.paper.title, "Failure Recovery")
         XCTAssertTrue(result.paper.tagNames.isEmpty)
         XCTAssertEqual(result.notice, "AI auto-tagging failed. Imported without generated tags.")
+        XCTAssertEqual(result.paper.autoTaggingStatusMessage, "AI auto-tagging failed: Provider unavailable")
     }
 
     func testAutoTaggingSkipsWhenDisabled() async throws {
@@ -202,5 +203,80 @@ final class PaperImportServiceTests: XCTestCase {
         XCTAssertEqual(tagger.callCount, 0)
         XCTAssertEqual(result.notice, "AI auto-tagging is enabled but not fully configured. Imported without generated tags.")
         XCTAssertTrue(result.paper.tagNames.isEmpty)
+        XCTAssertEqual(result.paper.autoTaggingStatusMessage, "AI auto-tagging is enabled but not fully configured. Imported without generated tags.")
+    }
+
+    func testDuplicateDirectPDFImportReturnsExistingPaper() async throws {
+        let container = try TestSupport.makeInMemoryContainer()
+        let context = ModelContext(container)
+        let settings = UserSettings(defaultImportBehavior: .scheduleImmediately)
+        let existingPaper = Paper(
+            title: "Agentic Workflows",
+            sourceURL: URL(string: "https://example.com/readings/agentic-workflows.pdf"),
+            pdfURL: URL(string: "https://example.com/readings/agentic-workflows.pdf"),
+            status: .scheduled
+        )
+        context.insert(settings)
+        context.insert(existingPaper)
+
+        let service = PaperImportService(
+            metadataResolver: StubMetadataResolver(
+                metadata: ResolvedPaperMetadata(
+                    title: "Agentic Workflows",
+                    authors: [],
+                    abstractText: "",
+                    sourceURL: URL(string: "https://example.com/readings/agentic-workflows.pdf"),
+                    pdfURL: URL(string: "https://example.com/readings/agentic-workflows.pdf")
+                )
+            )
+        )
+
+        let result = try await service.createPaper(
+            from: PaperCaptureRequest(sourceText: "https://example.com/readings/agentic-workflows.pdf"),
+            settings: settings,
+            in: context
+        )
+
+        XCTAssertFalse(result.didCreatePaper)
+        XCTAssertEqual(result.paper.id, existingPaper.id)
+        XCTAssertEqual(result.notice, "That paper is already in your library.")
+        XCTAssertEqual(try context.fetchCount(FetchDescriptor<Paper>()), 1)
+    }
+
+    func testDuplicateArxivAbsAndPDFImportReturnSameExistingPaper() async throws {
+        let container = try TestSupport.makeInMemoryContainer()
+        let context = ModelContext(container)
+        let settings = UserSettings(defaultImportBehavior: .scheduleImmediately)
+        let existingPaper = Paper(
+            title: "Compression Based Classification",
+            sourceURL: URL(string: "https://arxiv.org/abs/2603.06359"),
+            pdfURL: URL(string: "https://arxiv.org/pdf/2603.06359v1.pdf"),
+            status: .scheduled
+        )
+        context.insert(settings)
+        context.insert(existingPaper)
+
+        let service = PaperImportService(
+            metadataResolver: StubMetadataResolver(
+                metadata: ResolvedPaperMetadata(
+                    title: "Compression Based Classification",
+                    authors: [],
+                    abstractText: "A paper about classification.",
+                    sourceURL: URL(string: "https://arxiv.org/abs/2603.06359"),
+                    pdfURL: URL(string: "https://arxiv.org/pdf/2603.06359v1.pdf")
+                )
+            )
+        )
+
+        let result = try await service.createPaper(
+            from: PaperCaptureRequest(sourceText: "https://arxiv.org/pdf/2603.06359v1.pdf"),
+            settings: settings,
+            in: context
+        )
+
+        XCTAssertFalse(result.didCreatePaper)
+        XCTAssertEqual(result.paper.id, existingPaper.id)
+        XCTAssertEqual(result.notice, "That paper is already in your library.")
+        XCTAssertEqual(try context.fetchCount(FetchDescriptor<Paper>()), 1)
     }
 }

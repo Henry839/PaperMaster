@@ -222,7 +222,7 @@ private final class ArXivMetadataParser: NSObject, XMLParserDelegate {
     }
 }
 
-private extension URL {
+extension URL {
     var arxivIdentifier: String? {
         guard let host else { return nil }
         let normalizedHost = host.lowercased()
@@ -244,5 +244,54 @@ private extension URL {
 
     var isLikelyPDF: Bool {
         pathExtension.lowercased() == "pdf"
+    }
+
+    var canonicalArxivIdentifier: String? {
+        guard let arxivIdentifier else { return nil }
+
+        let lowercasedIdentifier = arxivIdentifier.lowercased()
+        guard let versionRange = lowercasedIdentifier.range(
+            of: #"v\d+$"#,
+            options: .regularExpression
+        ) else {
+            return lowercasedIdentifier
+        }
+
+        return String(lowercasedIdentifier[..<versionRange.lowerBound])
+    }
+
+    var canonicalPaperIdentityKeys: Set<String> {
+        var keys: Set<String> = []
+
+        if let canonicalURLString = canonicalPaperURLString {
+            keys.insert("url:\(canonicalURLString)")
+        }
+
+        if let canonicalArxivIdentifier {
+            keys.insert("arxiv:\(canonicalArxivIdentifier)")
+        }
+
+        return keys
+    }
+
+    private var canonicalPaperURLString: String? {
+        guard var components = URLComponents(url: self, resolvingAgainstBaseURL: false) else {
+            return nil
+        }
+
+        components.scheme = components.scheme?.lowercased()
+        components.host = components.host?.lowercased()
+
+        var normalizedPath = components.percentEncodedPath
+        if normalizedPath.count > 1, normalizedPath.hasSuffix("/") {
+            normalizedPath.removeLast()
+        }
+        components.percentEncodedPath = normalizedPath
+
+        if components.queryItems?.isEmpty == true {
+            components.query = nil
+        }
+
+        return components.string
     }
 }

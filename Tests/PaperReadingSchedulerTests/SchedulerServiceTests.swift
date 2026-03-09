@@ -47,6 +47,20 @@ final class SchedulerServiceTests: XCTestCase {
         XCTAssertEqual(plan[items[1].id]?.dueDate, Self.day(0))
     }
 
+    func testDueTodayScheduledItemsRebalanceWhenQueueOrderChanges() {
+        let scheduler = SchedulerService(calendar: Self.calendar)
+        let referenceDate = Self.referenceDate
+        let items = [
+            SchedulingItem(id: UUID(), status: .scheduled, queuePosition: 0, dueDate: Self.day(1), manualDueDateOverride: nil, dateAdded: referenceDate),
+            SchedulingItem(id: UUID(), status: .scheduled, queuePosition: 1, dueDate: Self.day(0), manualDueDateOverride: nil, dateAdded: referenceDate.addingTimeInterval(1))
+        ]
+
+        let plan = scheduler.makePlan(for: items, papersPerDay: 1, referenceDate: referenceDate)
+
+        XCTAssertEqual(plan[items[0].id]?.dueDate, Self.day(0))
+        XCTAssertEqual(plan[items[1].id]?.dueDate, Self.day(1))
+    }
+
     private static let calendar: Calendar = {
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = TimeZone(secondsFromGMT: 0)!
