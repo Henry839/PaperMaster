@@ -203,6 +203,143 @@ final class AppServicesTests: XCTestCase {
         XCTAssertEqual(services.presentedNotice?.message, "Copied BibTeX.")
     }
 
+    func testFusePapersReturnsIdeasAndShowsNotice() async {
+        let settings = UserSettings(aiTaggingEnabled: false)
+        let first = Paper(title: "Search Paper", abstractText: "Search abstract", status: .scheduled)
+        let second = Paper(title: "Agent Paper", abstractText: "Agent abstract", status: .scheduled)
+        let expectedModel = settings.aiTaggingModel
+        let fusionGenerator = SpyPaperFusionGenerator { inputs, configuration in
+            XCTAssertEqual(inputs.count, 2)
+            XCTAssertEqual(configuration.model, expectedModel)
+            return [
+                PaperFusionIdea(title: "Idea 1", hypothesis: "Hypothesis 1", rationale: "Rationale 1"),
+                PaperFusionIdea(title: "Idea 2", hypothesis: "Hypothesis 2", rationale: "Rationale 2"),
+                PaperFusionIdea(title: "Idea 3", hypothesis: "Hypothesis 3", rationale: "Rationale 3")
+            ]
+        }
+
+        let services = AppServices(
+            importService: PaperImportService(
+                metadataResolver: StubMetadataResolver(
+                    metadata: ResolvedPaperMetadata(
+                        title: "",
+                        authors: [],
+                        abstractText: "",
+                        sourceURL: nil,
+                        pdfURL: nil
+                    )
+                )
+            ),
+            fusionGenerator: fusionGenerator,
+            reminderService: ReminderService(center: FakeNotificationCenter()),
+            taggingCredentialStore: FakeTaggingCredentialStore(apiKey: "sk-test")
+        )
+
+        let result = await services.fusePapers([first, second], settings: settings)
+
+        XCTAssertEqual(result?.ideas.count, 3)
+        XCTAssertEqual(fusionGenerator.callCount, 1)
+        XCTAssertEqual(services.presentedNotice?.message, "Refining complete. The reactor returned 3 research ideas.")
+        XCTAssertNil(services.presentedError)
+    }
+
+    func testFusePapersRequiresConfiguredProviderEvenWhenAutoTaggingIsOff() async {
+        let settings = UserSettings(aiTaggingEnabled: false)
+        let first = Paper(title: "Search Paper", status: .scheduled)
+        let second = Paper(title: "Agent Paper", status: .scheduled)
+        let fusionGenerator = SpyPaperFusionGenerator { _, _ in
+            XCTFail("Fusion generator should not run without a configured provider")
+            return []
+        }
+
+        let services = AppServices(
+            importService: PaperImportService(
+                metadataResolver: StubMetadataResolver(
+                    metadata: ResolvedPaperMetadata(
+                        title: "",
+                        authors: [],
+                        abstractText: "",
+                        sourceURL: nil,
+                        pdfURL: nil
+                    )
+                )
+            ),
+            fusionGenerator: fusionGenerator,
+            reminderService: ReminderService(center: FakeNotificationCenter()),
+            taggingCredentialStore: FakeTaggingCredentialStore(apiKey: nil)
+        )
+
+        let result = await services.fusePapers([first, second], settings: settings)
+
+        XCTAssertNil(result)
+        XCTAssertEqual(fusionGenerator.callCount, 0)
+        XCTAssertEqual(services.presentedError?.message, "Save an API key in Keychain to enable AI features.")
+    }
+
+    func testFusePapersPropagatesProviderFailure() async {
+        let settings = UserSettings(aiTaggingEnabled: false)
+        let first = Paper(title: "Search Paper", status: .scheduled)
+        let second = Paper(title: "Agent Paper", status: .scheduled)
+        let fusionGenerator = SpyPaperFusionGenerator { _, _ in
+            throw TestError(message: "Provider unavailable")
+        }
+
+        let services = AppServices(
+            importService: PaperImportService(
+                metadataResolver: StubMetadataResolver(
+                    metadata: ResolvedPaperMetadata(
+                        title: "",
+                        authors: [],
+                        abstractText: "",
+                        sourceURL: nil,
+                        pdfURL: nil
+                    )
+                )
+            ),
+            fusionGenerator: fusionGenerator,
+            reminderService: ReminderService(center: FakeNotificationCenter()),
+            taggingCredentialStore: FakeTaggingCredentialStore(apiKey: "sk-test")
+        )
+
+        let result = await services.fusePapers([first, second], settings: settings)
+
+        XCTAssertNil(result)
+        XCTAssertEqual(fusionGenerator.callCount, 1)
+        XCTAssertEqual(services.presentedError?.message, "Provider unavailable")
+    }
+
+    func testFusePapersRequiresAtLeastTwoPapers() async {
+        let settings = UserSettings(aiTaggingEnabled: false)
+        let onlyPaper = Paper(title: "Lonely Paper", status: .scheduled)
+        let fusionGenerator = SpyPaperFusionGenerator { _, _ in
+            XCTFail("Fusion generator should not run with fewer than two papers")
+            return []
+        }
+
+        let services = AppServices(
+            importService: PaperImportService(
+                metadataResolver: StubMetadataResolver(
+                    metadata: ResolvedPaperMetadata(
+                        title: "",
+                        authors: [],
+                        abstractText: "",
+                        sourceURL: nil,
+                        pdfURL: nil
+                    )
+                )
+            ),
+            fusionGenerator: fusionGenerator,
+            reminderService: ReminderService(center: FakeNotificationCenter()),
+            taggingCredentialStore: FakeTaggingCredentialStore(apiKey: "sk-test")
+        )
+
+        let result = await services.fusePapers([onlyPaper], settings: settings)
+
+        XCTAssertNil(result)
+        XCTAssertEqual(fusionGenerator.callCount, 0)
+        XCTAssertEqual(services.presentedError?.message, "Add at least two papers to the reactor before refining.")
+    }
+
     func testPrepareReaderPrefersManagedLocalPDF() async throws {
         let container = try TestSupport.makeInMemoryContainer()
         let context = ModelContext(container)

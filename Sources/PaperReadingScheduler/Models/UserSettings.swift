@@ -197,9 +197,7 @@ final class UserSettings {
         ) ?? now
     }
 
-    func aiTaggingReadiness(apiKey: String?) -> AITaggingReadiness {
-        guard aiTaggingEnabled else { return .disabled }
-
+    func aiProviderReadiness(apiKey: String?) -> AIProviderReadiness {
         let trimmedBaseURL = aiTaggingBaseURLString.trimmingCharacters(in: .whitespacesAndNewlines)
         guard trimmedBaseURL.isEmpty == false else {
             return .missingBaseURL
@@ -219,12 +217,33 @@ final class UserSettings {
         }
 
         return .ready(
-            PaperTaggingConfiguration(
+            AIProviderConfiguration(
                 baseURL: baseURL,
                 model: trimmedModel,
                 apiKey: trimmedAPIKey
             )
         )
+    }
+
+    func aiProviderConfiguration(apiKey: String?) -> AIProviderConfiguration? {
+        aiProviderReadiness(apiKey: apiKey).configuration
+    }
+
+    func aiTaggingReadiness(apiKey: String?) -> AITaggingReadiness {
+        guard aiTaggingEnabled else { return .disabled }
+
+        switch aiProviderReadiness(apiKey: apiKey) {
+        case .missingBaseURL:
+            return .missingBaseURL
+        case .invalidBaseURL:
+            return .invalidBaseURL
+        case .missingModel:
+            return .missingModel
+        case .missingAPIKey:
+            return .missingAPIKey
+        case let .ready(configuration):
+            return .ready(configuration)
+        }
     }
 
     func aiTaggingConfiguration(apiKey: String?) -> PaperTaggingConfiguration? {

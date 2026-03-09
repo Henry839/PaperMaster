@@ -28,6 +28,7 @@ struct SystemTextClipboardWriter: TextClipboardWriting {
 @Observable
 final class AppServices {
     let importService: PaperImportService
+    let fusionGenerator: PaperFusionGenerating?
     let schedulerService: SchedulerService
     let pdfCacheService: PDFCacheService
     let paperStorageService: PaperStorageService
@@ -44,6 +45,7 @@ final class AppServices {
 
     init(
         importService: PaperImportService,
+        fusionGenerator: PaperFusionGenerating? = nil,
         schedulerService: SchedulerService = SchedulerService(),
         pdfCacheService: PDFCacheService = PDFCacheService(),
         paperStorageService: PaperStorageService = PaperStorageService(),
@@ -55,6 +57,7 @@ final class AppServices {
         startupErrorMessage: String? = nil
     ) {
         self.importService = importService
+        self.fusionGenerator = fusionGenerator
         self.schedulerService = schedulerService
         self.pdfCacheService = pdfCacheService
         self.paperStorageService = paperStorageService
@@ -80,6 +83,7 @@ final class AppServices {
                 tagGenerator: OpenAICompatiblePaperTagger(),
                 credentialStore: taggingCredentialStore
             ),
+            fusionGenerator: OpenAICompatiblePaperFusionGenerator(),
             paperStorageService: PaperStorageService(
                 credentialStore: paperStorageCredentialStore
             ),
@@ -318,6 +322,61 @@ final class AppServices {
         }
     }
 
+    func fusePapers(_ papers: [Paper], settings: UserSettings) async -> PaperFusionResult? {
+        guard papers.count >= FusionMaterialSelection.minimumPaperCount else {
+            present(PaperFusionError.notEnoughPapers)
+            return nil
+        }
+
+        guard papers.count <= FusionMaterialSelection.maximumPaperCount else {
+            present(PaperFusionError.tooManyPapers(limit: FusionMaterialSelection.maximumPaperCount))
+            return nil
+        }
+
+        guard let fusionGenerator else {
+            present(PaperFusionError.generatorUnavailable)
+            return nil
+        }
+
+        let storedAPIKey: String?
+        do {
+            storedAPIKey = try taggingCredentialStore.loadAPIKey()
+        } catch {
+            present(error)
+            return nil
+        }
+
+        guard let configuration = settings.aiProviderConfiguration(apiKey: storedAPIKey) else {
+            let readiness = settings.aiProviderReadiness(apiKey: storedAPIKey)
+            present(PaperFusionError.providerNotConfigured(readiness.settingsMessage))
+            return nil
+        }
+
+        let inputs = papers.map { paper in
+            PaperFusionInput(
+                paperID: paper.id,
+                title: paper.title.trimmingCharacters(in: .whitespacesAndNewlines),
+                authorsText: paper.authorsDisplayText,
+                abstractText: truncated(paper.abstractText, limit: 1_400),
+                tagNames: Array(paper.tagNames.prefix(8))
+            )
+        }
+
+        do {
+            let ideas = try await fusionGenerator.generateIdeas(for: inputs, configuration: configuration)
+            let result = PaperFusionResult(
+                selectedPaperIDs: papers.map(\.id),
+                ideas: ideas,
+                generatedAt: .now
+            )
+            showNotice("Refining complete. The reactor returned 3 research ideas.")
+            return result
+        } catch {
+            present(error)
+            return nil
+        }
+    }
+
     func hasSavedPaperStoragePassword(for settings: UserSettings) -> Bool {
         guard let endpoint = settings.paperStorageCredentialEndpoint else {
             return false
@@ -521,6 +580,13 @@ final class AppServices {
             .filter { $0.isEmpty == false }
         guard messages.isEmpty == false else { return nil }
         return messages.joined(separator: "\n")
+    }
+
+    private func truncated(_ text: String, limit: Int) -> String {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.count > limit else { return trimmed }
+        let endIndex = trimmed.index(trimmed.startIndex, offsetBy: limit)
+        return String(trimmed[..<endIndex]).trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     private func storeManagedPDFIfPossible(for paper: Paper, settings: UserSettings) async -> String? {

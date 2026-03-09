@@ -48,6 +48,29 @@ final class SpyPaperTagger: PaperTagGenerating, @unchecked Sendable {
     }
 }
 
+final class SpyPaperFusionGenerator: PaperFusionGenerating, @unchecked Sendable {
+    private(set) var inputs: [[PaperFusionInput]] = []
+    private let handler: @Sendable ([PaperFusionInput], AIProviderConfiguration) throws -> [PaperFusionIdea]
+
+    init(
+        handler: @escaping @Sendable ([PaperFusionInput], AIProviderConfiguration) throws -> [PaperFusionIdea]
+    ) {
+        self.handler = handler
+    }
+
+    var callCount: Int {
+        inputs.count
+    }
+
+    func generateIdeas(
+        for inputs: [PaperFusionInput],
+        configuration: AIProviderConfiguration
+    ) async throws -> [PaperFusionIdea] {
+        self.inputs.append(inputs)
+        return try handler(inputs, configuration)
+    }
+}
+
 final class SpyPublicationEnricher: PublicationEnriching, @unchecked Sendable {
     private(set) var requests: [PublicationEnrichmentRequest] = []
     private let handler: @Sendable (PublicationEnrichmentRequest) -> PublicationEnrichmentResult

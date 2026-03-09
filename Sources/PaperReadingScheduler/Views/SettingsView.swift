@@ -239,13 +239,13 @@ struct SettingsView: View {
     }
 
     private var aiTaggingSection: some View {
-        let readiness = settings.aiTaggingReadiness(apiKey: taggingAPIKey)
+        let providerReadiness = settings.aiProviderReadiness(apiKey: taggingAPIKey)
 
         return VStack(alignment: .leading, spacing: 18) {
             VStack(alignment: .leading, spacing: 4) {
-                Text("AI Tagging")
+                Text("AI Provider")
                     .font(.title3.weight(.semibold))
-                Text("Generate tags automatically during import using an OpenAI-compatible provider.")
+                Text("Paper Fusion Reactor and optional import auto-tagging both use this OpenAI-compatible provider.")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
             }
@@ -283,11 +283,11 @@ struct SettingsView: View {
                 .disabled(taggingAPIKey.isEmpty)
             }
 
-            Label(readiness.settingsMessage, systemImage: readinessSymbol(for: readiness))
+            Label(providerReadiness.settingsMessage, systemImage: readinessSymbol(for: providerReadiness))
                 .font(.footnote.weight(.semibold))
-                .foregroundStyle(readinessColor(for: readiness))
+                .foregroundStyle(readinessColor(for: providerReadiness))
 
-            Text("Only new imports are auto-tagged. Existing papers keep their tags unless you edit them manually.")
+            Text("Turn on the import toggle if you want new papers auto-tagged. Fusion Reactor can still use the provider even when import auto-tagging is off.")
                 .font(.footnote)
                 .foregroundStyle(.secondary)
         }
@@ -349,10 +349,8 @@ struct SettingsView: View {
         )
     }
 
-    private func readinessSymbol(for readiness: AITaggingReadiness) -> String {
+    private func readinessSymbol(for readiness: AIProviderReadiness) -> String {
         switch readiness {
-        case .disabled:
-            "bolt.slash"
         case .ready:
             "checkmark.circle.fill"
         case .missingBaseURL, .invalidBaseURL, .missingModel, .missingAPIKey:
@@ -360,10 +358,8 @@ struct SettingsView: View {
         }
     }
 
-    private func readinessColor(for readiness: AITaggingReadiness) -> Color {
+    private func readinessColor(for readiness: AIProviderReadiness) -> Color {
         switch readiness {
-        case .disabled:
-            .secondary
         case .ready:
             .green
         case .missingBaseURL, .invalidBaseURL, .missingModel, .missingAPIKey:

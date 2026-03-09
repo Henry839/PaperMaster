@@ -2,6 +2,12 @@ import SwiftData
 import SwiftUI
 import UniformTypeIdentifiers
 
+private let queueDragAnimation = Animation.interactiveSpring(
+    response: 0.26,
+    dampingFraction: 0.84,
+    blendDuration: 0.12
+)
+
 struct AppRootView: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(AppServices.self) private var services
@@ -15,7 +21,7 @@ struct AppRootView: View {
     @State private var draggedQueuePaperID: UUID?
     @State private var queuePreviewPaperIDs: [UUID]?
     @State private var queueDropTargetPaperID: UUID?
-    @State private var queueRowHeights: [UUID: CGFloat] = [:]
+    @State private var fusionSession = FusionReactorSession()
 
     private var settings: UserSettings? {
         settingsList.first
@@ -28,8 +34,13 @@ struct AppRootView: View {
     private var feedbackSnapshot: FeedbackSnapshot {
         FeedbackSnapshot(
             screen: router.selectedScreen,
-            selectedPaper: router.selectedScreen == AppScreen.settings ? nil : selectedPaper
+            selectedPaper: (router.selectedScreen == AppScreen.settings || router.selectedScreen == AppScreen.fusionReactor) ? nil : selectedPaper
         )
+    }
+
+    private var fusionSelectedPapers: [Paper] {
+        let papersByID = Dictionary(uniqueKeysWithValues: papers.map { ($0.id, $0) })
+        return fusionSession.selectedPaperIDs.compactMap { papersByID[$0] }
     }
 
     private var importSheetBinding: Binding<Bool> {
@@ -73,6 +84,8 @@ struct AppRootView: View {
                 }
                 .filter { $0.matchesSearch(librarySearch) }
                 .sorted { $0.dateAdded > $1.dateAdded }
+        case .fusionReactor:
+            return []
         case .settings:
             return []
         }
@@ -123,10 +136,16 @@ struct AppRootView: View {
                 if router.selectedScreen != .queue {
                     resetQueueDragState()
                 }
+                if router.selectedScreen != .fusionReactor {
+                    fusionSession.reset()
+                }
                 syncSelectionIfNeeded(forceFirst: true)
             }
             .onChange(of: displayedPaperIDs) { _, _ in
                 syncSelectionIfNeeded()
+            }
+            .onChange(of: papers.map(\.id)) { _, ids in
+                fusionSession.syncMaterials(allowedPaperIDs: Set(ids))
             }
             .alert(
                 "Something went wrong",
@@ -155,6 +174,7 @@ struct AppRootView: View {
     private var navigationView: some View {
         NavigationSplitView {
             sidebar
+                .navigationSplitViewColumnWidth(min: 196, ideal: 220, max: 260)
         } content: {
             middleColumn
         } detail: {
@@ -171,6 +191,17 @@ struct AppRootView: View {
                 ProgressView()
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
+        } else if router.selectedScreen == AppScreen.fusionReactor {
+            if let settings {
+                PaperFusionReactorView(
+                    papers: papers,
+                    settings: settings,
+                    session: fusionSession
+                )
+            } else {
+                ProgressView()
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
         } else {
             contentColumn
         }
@@ -180,6 +211,17 @@ struct AppRootView: View {
     private var detailColumn: some View {
         if router.selectedScreen == AppScreen.settings {
             settingsDetailPlaceholder
+        } else if router.selectedScreen == AppScreen.fusionReactor {
+            if let settings {
+                PaperFusionResultView(
+                    session: fusionSession,
+                    selectedPapers: fusionSelectedPapers,
+                    providerReadiness: settings.aiProviderReadiness(apiKey: services.loadTaggingAPIKey())
+                )
+            } else {
+                ProgressView()
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
         } else if let selectedPaper, let settings {
             PaperDetailView(paper: selectedPaper, settings: settings, allPapers: papers)
         } else {
@@ -286,8 +328,7 @@ struct AppRootView: View {
                     }
                 }
                 .listStyle(.inset(alternatesRowBackgrounds: true))
-                .animation(.snappy(duration: 0.18), value: queuePreviewPaperIDs)
-                .onPreferenceChange(QueueRowHeightPreferenceKey.self) { queueRowHeights = $0 }
+                .animation(queueDragAnimation, value: queuePreviewPaperIDs)
                 .onDrop(
                     of: [UTType.text],
                     delegate: QueueListDropDelegate(
@@ -328,6 +369,8 @@ struct AppRootView: View {
             return "Queue ordered by reading priority and spread across upcoming days."
         case .library:
             return "Browse every active paper, including completed reads and drafts."
+        case .fusionReactor:
+            return ""
         case .settings:
             return ""
         }
@@ -343,6 +386,8 @@ struct AppRootView: View {
             "Queue is empty"
         case .library:
             "No matching papers"
+        case .fusionReactor:
+            ""
         case .settings:
             ""
         }
@@ -358,6 +403,8 @@ struct AppRootView: View {
             "list.bullet.rectangle"
         case .library:
             "magnifyingglass"
+        case .fusionReactor:
+            "flame"
         case .settings:
             "gearshape"
         }
@@ -373,6 +420,8 @@ struct AppRootView: View {
             "Import a paper and schedule it to start building your reading plan."
         case .library:
             "Try a different search query or filter."
+        case .fusionReactor:
+            ""
         case .settings:
             ""
         }
@@ -388,6 +437,8 @@ struct AppRootView: View {
             papers.filter { $0.status.isActiveQueue }.count
         case .library:
             papers.filter { $0.status != .archived }.count
+        case .fusionReactor:
+            0
         case .settings:
             0
         }
@@ -398,17 +449,21 @@ struct AppRootView: View {
             router.selectedScreen = screen
         } label: {
             HStack {
-                Label(screen.title, systemImage: screen.symbolName)
+                Label(screen.sidebarTitle, systemImage: screen.symbolName)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
                 Spacer()
-                if screen != AppScreen.settings {
+                if screen != AppScreen.settings && screen != AppScreen.fusionReactor {
                     Text(countForScreen(screen).formatted())
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.vertical, 6)
             .padding(.horizontal, 8)
             .background(sidebarBackground(for: screen))
+            .contentShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
         }
         .buttonStyle(.plain)
     }
@@ -419,7 +474,8 @@ struct AppRootView: View {
     }
 
     private func syncSelectionIfNeeded(forceFirst: Bool = false) {
-        guard router.selectedScreen != AppScreen.settings else {
+        guard router.selectedScreen != AppScreen.settings,
+              router.selectedScreen != AppScreen.fusionReactor else {
             router.selectedPaperID = nil
             return
         }
@@ -465,7 +521,6 @@ struct AppRootView: View {
         )
         .tag(Optional(paper.id))
         .contentShape(Rectangle())
-        .background(queueRowHeightReader(for: paper))
         .simultaneousGesture(
             TapGesture().onEnded {
                 router.selectedPaperID = paper.id
@@ -480,13 +535,7 @@ struct AppRootView: View {
                     delegate: QueueRowDropDelegate(
                         targetPaperID: paper.id,
                         draggedPaperID: draggedQueuePaperID,
-                        updatePreview: { location in
-                            moveQueuePreview(
-                                hoveringOver: paper.id,
-                                locationY: location.y,
-                                rowHeight: queueRowHeights[paper.id]
-                            )
-                        },
+                        updatePreview: { moveQueuePreview(hoveringOver: paper.id) },
                         commitDrop: commitQueueDrop,
                         clearDropTarget: clearQueueDropTarget(_:)
                     )
@@ -503,29 +552,33 @@ struct AppRootView: View {
         return NSItemProvider(object: paper.id.uuidString as NSString)
     }
 
-    private func moveQueuePreview(hoveringOver targetPaperID: UUID, locationY: CGFloat, rowHeight: CGFloat?) {
-        guard let draggedQueuePaperID, draggedQueuePaperID != targetPaperID else { return }
+    private func moveQueuePreview(hoveringOver targetPaperID: UUID) {
+        guard let draggedQueuePaperID,
+              draggedQueuePaperID != targetPaperID,
+              let draggedOriginalIndex = queuePapers.firstIndex(where: { $0.id == draggedQueuePaperID }),
+              let targetOriginalIndex = queuePapers.firstIndex(where: { $0.id == targetPaperID }) else {
+            return
+        }
 
         if queuePreviewPaperIDs == nil {
             queuePreviewPaperIDs = queuePapers.map(\.id)
         }
 
-        guard let previewIDs = queuePreviewPaperIDs,
-              let rowHeight, rowHeight > 0 else {
-            return
-        }
+        guard let previewIDs = queuePreviewPaperIDs else { return }
+        guard queueDropTargetPaperID != targetPaperID else { return }
 
         queueDropTargetPaperID = targetPaperID
 
-        let insertAfterTarget = locationY >= rowHeight / 2
         guard let reorderedPreview = QueueDragPreview.reorderedIDs(
             from: previewIDs,
             draggedID: draggedQueuePaperID,
             targetID: targetPaperID,
-            insertAfterTarget: insertAfterTarget
+            insertAfterTarget: targetOriginalIndex > draggedOriginalIndex
         ) else { return }
 
-        queuePreviewPaperIDs = reorderedPreview
+        withAnimation(queueDragAnimation) {
+            queuePreviewPaperIDs = reorderedPreview
+        }
     }
 
     private func commitQueueDrop() {
@@ -559,21 +612,12 @@ struct AppRootView: View {
         queueDropTargetPaperID = nil
     }
 
-    @ViewBuilder
-    private func queueRowHeightReader(for paper: Paper) -> some View {
-        if router.selectedScreen == .queue, paper.status.isActiveQueue {
-            GeometryReader { proxy in
-                Color.clear
-                    .preference(key: QueueRowHeightPreferenceKey.self, value: [paper.id: proxy.size.height])
-            }
-        }
-    }
 }
 
 private struct QueueRowDropDelegate: DropDelegate {
     let targetPaperID: UUID
     let draggedPaperID: UUID?
-    let updatePreview: (CGPoint) -> Void
+    let updatePreview: () -> Void
     let commitDrop: () -> Void
     let clearDropTarget: (UUID) -> Void
 
@@ -583,12 +627,12 @@ private struct QueueRowDropDelegate: DropDelegate {
 
     func dropEntered(info: DropInfo) {
         guard draggedPaperID != nil else { return }
-        updatePreview(info.location)
+        updatePreview()
     }
 
     func dropUpdated(info: DropInfo) -> DropProposal? {
         guard draggedPaperID != nil else { return nil }
-        updatePreview(info.location)
+        updatePreview()
         return DropProposal(operation: .move)
     }
 
@@ -635,29 +679,22 @@ struct QueueDragPreview {
         insertAfterTarget: Bool
     ) -> [UUID]? {
         guard draggedID != targetID,
-              let currentIndex = previewIDs.firstIndex(of: draggedID) else {
+              let currentIndex = previewIDs.firstIndex(of: draggedID),
+              let targetIndex = previewIDs.firstIndex(of: targetID) else {
             return nil
         }
 
         var reorderedIDs = previewIDs
-        reorderedIDs.remove(at: currentIndex)
-
-        guard let targetIndex = reorderedIDs.firstIndex(of: targetID) else {
-            return nil
+        let movedID = reorderedIDs.remove(at: currentIndex)
+        let destinationIndex: Int
+        if currentIndex < targetIndex {
+            destinationIndex = insertAfterTarget ? targetIndex : max(0, targetIndex - 1)
+        } else {
+            destinationIndex = insertAfterTarget ? min(reorderedIDs.count, targetIndex + 1) : targetIndex
         }
-
-        let destinationIndex = min(reorderedIDs.count, targetIndex + (insertAfterTarget ? 1 : 0))
-        reorderedIDs.insert(draggedID, at: destinationIndex)
+        reorderedIDs.insert(movedID, at: destinationIndex)
 
         guard reorderedIDs != previewIDs else { return nil }
         return reorderedIDs
-    }
-}
-
-private struct QueueRowHeightPreferenceKey: PreferenceKey {
-    static let defaultValue: [UUID: CGFloat] = [:]
-
-    static func reduce(value: inout [UUID: CGFloat], nextValue: () -> [UUID: CGFloat]) {
-        value.merge(nextValue(), uniquingKeysWith: { _, new in new })
     }
 }

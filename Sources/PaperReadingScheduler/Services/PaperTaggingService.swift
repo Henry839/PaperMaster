@@ -6,12 +6,6 @@ struct PaperTaggingInput: Sendable {
     let existingTags: [String]
 }
 
-struct PaperTaggingConfiguration: Equatable, Sendable {
-    let baseURL: URL
-    let model: String
-    let apiKey: String
-}
-
 enum AITaggingReadiness: Equatable {
     case disabled
     case missingBaseURL
@@ -103,7 +97,7 @@ struct OpenAICompatiblePaperTagger: PaperTagGenerating {
         for input: PaperTaggingInput,
         configuration: PaperTaggingConfiguration
     ) async throws -> [String] {
-        guard let endpoint = makeEndpoint(from: configuration.baseURL) else {
+        guard let endpoint = makeOpenAIChatCompletionsEndpoint(from: configuration.baseURL) else {
             throw PaperTaggingError.invalidEndpoint
         }
 
@@ -138,14 +132,6 @@ struct OpenAICompatiblePaperTagger: PaperTagGenerating {
         }
 
         return try decodeTags(from: content)
-    }
-
-    private func makeEndpoint(from baseURL: URL) -> URL? {
-        let trimmedPath = baseURL.path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
-        if trimmedPath.hasSuffix("chat/completions") {
-            return baseURL
-        }
-        return baseURL.appendingPathComponent("chat").appendingPathComponent("completions")
     }
 
     private func decodeTags(from content: String) throws -> [String] {
@@ -206,37 +192,6 @@ struct OpenAICompatiblePaperTagger: PaperTagGenerating {
     }
 }
 
-private struct OpenAIChatCompletionsRequest: Encodable {
-    struct Message: Encodable {
-        let role: String
-        let content: String
-    }
-
-    let model: String
-    let temperature: Double
-    let messages: [Message]
-}
-
-private struct OpenAIChatCompletionsResponse: Decodable {
-    struct Choice: Decodable {
-        struct Message: Decodable {
-            let content: String?
-        }
-
-        let message: Message
-    }
-
-    let choices: [Choice]
-}
-
 private struct TaggingPayload: Decodable {
     let tags: [String]
-}
-
-private struct OpenAIErrorResponse: Decodable {
-    struct ErrorPayload: Decodable {
-        let message: String
-    }
-
-    let error: ErrorPayload
 }
