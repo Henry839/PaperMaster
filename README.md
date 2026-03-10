@@ -1,6 +1,6 @@
-# Henry稍后读
+# PaperMaster
 
-Henry稍后读 is a native macOS paper queue app for collecting papers, storing PDFs, scheduling what to read next, fusing papers into new research ideas, and reviewing PDFs without leaving the app.
+PaperMaster is a native macOS paper queue app for collecting papers, storing PDFs, scheduling what to read next, fusing papers into new research ideas, and reviewing PDFs without leaving the app.
 
 The app is built with `SwiftUI`, `SwiftData`, `PDFKit`, and `UserNotifications`.
 
