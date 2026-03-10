@@ -29,12 +29,14 @@ struct SystemTextClipboardWriter: TextClipboardWriting {
 final class AppServices {
     let importService: PaperImportService
     let fusionGenerator: PaperFusionGenerating?
+    let readerAnswerer: ReaderAnswerGenerating?
     let schedulerService: SchedulerService
     let pdfCacheService: PDFCacheService
     let paperStorageService: PaperStorageService
     let reminderService: ReminderService
     let taggingCredentialStore: TaggingCredentialStoring
     let paperStorageCredentialStore: PaperStorageCredentialStoring
+    let readerDocumentContextLoader: ReaderDocumentContextLoading
     let textClipboard: TextClipboardWriting
     @ObservationIgnored private let startupNoticeMessage: String?
     @ObservationIgnored private let startupErrorMessage: String?
@@ -46,24 +48,28 @@ final class AppServices {
     init(
         importService: PaperImportService,
         fusionGenerator: PaperFusionGenerating? = nil,
+        readerAnswerer: ReaderAnswerGenerating? = nil,
         schedulerService: SchedulerService = SchedulerService(),
         pdfCacheService: PDFCacheService = PDFCacheService(),
         paperStorageService: PaperStorageService = PaperStorageService(),
         reminderService: ReminderService = ReminderService(),
         taggingCredentialStore: TaggingCredentialStoring = InMemoryTaggingCredentialStore(),
         paperStorageCredentialStore: PaperStorageCredentialStoring = InMemoryPaperStorageCredentialStore(),
+        readerDocumentContextLoader: ReaderDocumentContextLoading = PDFKitReaderDocumentContextLoader(),
         textClipboard: TextClipboardWriting = SystemTextClipboardWriter(),
         startupNoticeMessage: String? = nil,
         startupErrorMessage: String? = nil
     ) {
         self.importService = importService
         self.fusionGenerator = fusionGenerator
+        self.readerAnswerer = readerAnswerer
         self.schedulerService = schedulerService
         self.pdfCacheService = pdfCacheService
         self.paperStorageService = paperStorageService
         self.reminderService = reminderService
         self.taggingCredentialStore = taggingCredentialStore
         self.paperStorageCredentialStore = paperStorageCredentialStore
+        self.readerDocumentContextLoader = readerDocumentContextLoader
         self.textClipboard = textClipboard
         self.startupNoticeMessage = startupNoticeMessage
         self.startupErrorMessage = startupErrorMessage
@@ -84,6 +90,7 @@ final class AppServices {
                 credentialStore: taggingCredentialStore
             ),
             fusionGenerator: OpenAICompatiblePaperFusionGenerator(),
+            readerAnswerer: OpenAICompatibleReaderAnswerer(),
             paperStorageService: PaperStorageService(
                 credentialStore: paperStorageCredentialStore
             ),
@@ -363,6 +370,60 @@ final class AppServices {
         } catch {
             present(error)
             return ""
+        }
+    }
+
+    func loadReaderDocumentContext(from fileURL: URL) -> ReaderAskAIDocumentContext {
+        let context = readerDocumentContextLoader.loadDocumentContext(from: fileURL)
+        if context.hasUsableText == false {
+            showNotice("Couldn't extract full paper text. Ask AI will use the selection and paper metadata only.")
+        }
+        return context
+    }
+
+    func answerReaderQuestion(
+        _ question: String,
+        for paper: Paper,
+        selection: ReaderSelectionSnapshot,
+        settings: UserSettings,
+        documentContext: ReaderAskAIDocumentContext
+    ) async -> String? {
+        guard let readerAnswerer else {
+            present(ReaderAnswerError.generatorUnavailable)
+            return nil
+        }
+
+        let storedAPIKey: String?
+        do {
+            storedAPIKey = try taggingCredentialStore.loadAPIKey()
+        } catch {
+            present(error)
+            return nil
+        }
+
+        guard let configuration = settings.aiProviderConfiguration(apiKey: storedAPIKey) else {
+            let readiness = settings.aiProviderReadiness(apiKey: storedAPIKey)
+            present(ReaderAnswerError.providerNotConfigured(readiness.settingsMessage))
+            return nil
+        }
+
+        let input = ReaderAskAIInput(
+            question: question.trimmingCharacters(in: .whitespacesAndNewlines),
+            quotedText: selection.quotedText,
+            pageNumber: selection.pageNumber,
+            paperTitle: paper.title.trimmingCharacters(in: .whitespacesAndNewlines),
+            authorsText: paper.authorsDisplayText,
+            abstractText: truncated(paper.abstractText, limit: 1_400),
+            tagNames: Array(paper.tagNames.prefix(8)),
+            documentText: documentContext.documentText,
+            documentWasTruncated: documentContext.documentWasTruncated
+        )
+
+        do {
+            return try await readerAnswerer.answerQuestion(for: input, configuration: configuration)
+        } catch {
+            present(error)
+            return nil
         }
     }
 

@@ -9,12 +9,16 @@ struct ReaderView: View {
 
     @Bindable var paper: Paper
     let fileURL: URL
+    let settings: UserSettings
 
     @FocusState private var focusedField: ReaderFocusField?
     @State private var selectionState: ReaderPDFSelectionState = .none
     @State private var isSidebarVisible = true
     @State private var expandedAnnotationID: UUID?
     @State private var pdfCommand: ReaderPDFCommand?
+    @State private var askAISession = ReaderAskAISessionState()
+    @State private var cachedDocumentContext: ReaderAskAIDocumentContext?
+    @State private var askAITask: Task<Void, Never>?
     @State private var saveTask: Task<Void, Never>?
 
     var body: some View {
@@ -49,6 +53,8 @@ struct ReaderView: View {
         }
         .onDisappear {
             flushPendingSave()
+            askAITask?.cancel()
+            askAISession.reset()
         }
     }
 
@@ -102,6 +108,7 @@ struct ReaderView: View {
     private var sidebar: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
+                askAISection
                 annotationsSection
                 scratchpadSection
             }
@@ -152,13 +159,17 @@ struct ReaderView: View {
                 }
                 .keyboardShortcut("n", modifiers: [.command, .option])
 
+                Button("Ask AI") {
+                    beginAskAI(from: selection)
+                }
+
                 Button("Cancel", role: .cancel) {
                     sendPDFCommand(.clearSelection)
                 }
             }
         }
         .padding(14)
-        .frame(width: 280, alignment: .leading)
+        .frame(width: 320, alignment: .leading)
         .background(.regularMaterial)
         .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
         .overlay(
@@ -166,6 +177,155 @@ struct ReaderView: View {
                 .stroke(Color.primary.opacity(0.08), lineWidth: 1)
         )
         .shadow(color: .black.opacity(0.08), radius: 20, y: 10)
+    }
+
+    private var askAISection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Text("Ask AI")
+                    .font(.title3.weight(.semibold))
+                Spacer()
+                if askAISession.exchanges.isEmpty == false {
+                    Text("\(askAISession.exchanges.count)")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                        .background(Color.primary.opacity(0.06))
+                        .clipShape(Capsule())
+                }
+            }
+
+            if let draft = askAISession.draft {
+                askAIComposer(for: draft)
+            } else if askAISession.exchanges.isEmpty {
+                ContentUnavailableView(
+                    "No Ask AI prompts yet",
+                    systemImage: "sparkles",
+                    description: Text("Select text in the PDF, then choose Ask AI.")
+                )
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 18)
+            } else {
+                Text("Select another passage in the PDF, then choose Ask AI to ask a new question.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            }
+
+            if askAISession.exchanges.isEmpty == false {
+                Divider()
+
+                VStack(alignment: .leading, spacing: 12) {
+                    ForEach(askAISession.exchanges) { exchange in
+                        askAIExchangeCard(exchange)
+                    }
+                }
+            }
+        }
+        .padding(18)
+        .background(.background)
+        .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 20, style: .continuous)
+                .stroke(Color.primary.opacity(0.06), lineWidth: 1)
+        )
+    }
+
+    private func askAIComposer(for draft: ReaderAskAIDraft) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .firstTextBaseline) {
+                Text("Page \(draft.selection.pageNumber)")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                Spacer()
+                if cachedDocumentContext?.documentWasTruncated == true {
+                    Label("Document truncated", systemImage: "doc.text")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                }
+            }
+
+            Text(draft.selection.quotedText)
+                .font(.subheadline.weight(.medium))
+                .lineLimit(5)
+
+            Text("Question")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+
+            TextEditor(text: askAIQuestionBinding)
+                .focused($focusedField, equals: .askAIQuestion)
+                .font(.body)
+                .frame(minHeight: 110)
+                .padding(10)
+                .background(Color.primary.opacity(0.03))
+                .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 14, style: .continuous)
+                        .stroke(Color.primary.opacity(0.05), lineWidth: 1)
+                )
+
+            HStack(spacing: 10) {
+                Button("Ask") {
+                    submitAskAI()
+                }
+                .disabled(askAISession.canSubmit == false)
+
+                Button("Clear", role: .cancel) {
+                    askAISession.clearDraft()
+                    if focusedField == .askAIQuestion {
+                        focusedField = nil
+                    }
+                }
+                .disabled(askAISession.isAwaitingResponse)
+
+                Spacer()
+
+                if askAISession.isAwaitingResponse {
+                    ProgressView()
+                        .controlSize(.small)
+                }
+            }
+        }
+    }
+
+    private func askAIExchangeCard(_ exchange: ReaderAskAIExchange) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .firstTextBaseline) {
+                Text("Page \(exchange.pageNumber)")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Text(exchange.askedAt, style: .time)
+                    .font(.caption)
+                    .foregroundStyle(.tertiary)
+            }
+
+            Text(exchange.quotedText)
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+                .lineLimit(4)
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Question")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                Text(exchange.question)
+                    .font(.subheadline)
+            }
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Answer")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                Text(exchange.answer)
+                    .font(.body)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .padding(14)
+        .background(Color.primary.opacity(0.03))
+        .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
     }
 
     private var annotationsSection: some View {
@@ -358,6 +518,13 @@ struct ReaderView: View {
         )
     }
 
+    private var askAIQuestionBinding: Binding<String> {
+        Binding(
+            get: { askAISession.draft?.question ?? "" },
+            set: { askAISession.updateQuestion($0) }
+        )
+    }
+
     private func annotationNoteBinding(for annotation: PaperAnnotation) -> Binding<String> {
         Binding(
             get: { annotation.noteText },
@@ -389,6 +556,54 @@ struct ReaderView: View {
         }
 
         sendPDFCommand(.clearSelection)
+    }
+
+    private func beginAskAI(from selection: ReaderSelectionSnapshot) {
+        askAISession.capture(selection: selection)
+        withAnimation(.snappy(duration: 0.22)) {
+            isSidebarVisible = true
+        }
+        sendPDFCommand(.clearSelection)
+
+        DispatchQueue.main.async {
+            focusedField = .askAIQuestion
+        }
+    }
+
+    private func submitAskAI() {
+        guard let draft = askAISession.beginRequest() else { return }
+
+        let documentContext = resolveReaderDocumentContext()
+        askAITask?.cancel()
+        askAITask = Task {
+            let answer = await services.answerReaderQuestion(
+                draft.question,
+                for: paper,
+                selection: draft.selection,
+                settings: settings,
+                documentContext: documentContext
+            )
+
+            guard Task.isCancelled == false else { return }
+
+            await MainActor.run {
+                if let answer {
+                    askAISession.finishRequest(with: draft, answer: answer)
+                } else {
+                    askAISession.failRequest()
+                }
+            }
+        }
+    }
+
+    private func resolveReaderDocumentContext() -> ReaderAskAIDocumentContext {
+        if let cachedDocumentContext {
+            return cachedDocumentContext
+        }
+
+        let context = services.loadReaderDocumentContext(from: fileURL)
+        cachedDocumentContext = context
+        return context
     }
 
     private func expandAnnotation(_ annotationID: UUID, focusEditor: Bool) {
@@ -426,6 +641,7 @@ struct ReaderView: View {
 private enum ReaderFocusField: Hashable {
     case scratchpad
     case annotation(UUID)
+    case askAIQuestion
 }
 
 private enum ReaderPDFSelectionState: Equatable {

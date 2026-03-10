@@ -84,7 +84,7 @@ struct ReaderSelectionSnapshot: Equatable {
     let rects: [ReaderAnnotationRect]
 
     init?(pageIndex: Int, quotedText: String, rects: [CGRect]) {
-        let normalizedText = quotedText.normalizedReaderAnnotationText
+        let normalizedText = quotedText.normalizedReaderContent
         let normalizedRects = rects
             .filter { $0.isNull == false && $0.isInfinite == false }
             .map(ReaderAnnotationRect.init(rect:))
@@ -132,7 +132,7 @@ final class PaperAnnotation {
         self.id = id
         self.paper = paper
         self.pageIndex = pageIndex
-        self.quotedText = quotedText.normalizedReaderAnnotationText
+        self.quotedText = quotedText.normalizedReaderContent
         self.noteText = noteText
         self.colorRawValue = color.rawValue
         self.rectPayload = rectPayload
@@ -161,13 +161,13 @@ extension PaperAnnotation {
     }
 
     var notePreviewText: String {
-        let trimmed = noteText.normalizedReaderAnnotationText
+        let trimmed = noteText.normalizedReaderContent
         return trimmed.isEmpty ? "No note yet." : trimmed
     }
 
     func matches(_ selection: ReaderSelectionSnapshot) -> Bool {
         pageIndex == selection.pageIndex
-            && quotedText.normalizedReaderAnnotationText == selection.quotedText.normalizedReaderAnnotationText
+            && quotedText.normalizedReaderContent == selection.quotedText.normalizedReaderContent
             && rects == selection.rects
     }
 
@@ -183,14 +183,5 @@ extension PaperAnnotation {
             return lhs.createdAt < rhs.createdAt
         }
         return lhs.id.uuidString < rhs.id.uuidString
-    }
-}
-
-private extension String {
-    var normalizedReaderAnnotationText: String {
-        split(whereSeparator: \.isWhitespace)
-            .map(String.init)
-            .joined(separator: " ")
-            .trimmingCharacters(in: .whitespacesAndNewlines)
     }
 }

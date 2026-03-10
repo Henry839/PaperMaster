@@ -119,6 +119,164 @@ final class AppServicesTests: XCTestCase {
         XCTAssertEqual(try context.fetchCount(FetchDescriptor<PaperAnnotation>()), 0)
     }
 
+    func testAnswerReaderQuestionRequiresConfiguredProviderEvenWhenAutoTaggingIsOff() async throws {
+        let settings = UserSettings(aiTaggingEnabled: false)
+        let paper = Paper(title: "Annotated")
+        let answerer = SpyReaderAnswerer { _, _ in
+            XCTFail("Reader answerer should not run without a configured provider")
+            return ""
+        }
+        let selection = try XCTUnwrap(
+            ReaderSelectionSnapshot(
+                pageIndex: 0,
+                quotedText: "Important quote",
+                rects: [CGRect(x: 10, y: 22, width: 90, height: 12)]
+            )
+        )
+
+        let services = AppServices(
+            importService: PaperImportService(
+                metadataResolver: StubMetadataResolver(
+                    metadata: ResolvedPaperMetadata(
+                        title: "",
+                        authors: [],
+                        abstractText: "",
+                        sourceURL: nil,
+                        pdfURL: nil
+                    )
+                )
+            ),
+            readerAnswerer: answerer,
+            reminderService: ReminderService(center: FakeNotificationCenter()),
+            taggingCredentialStore: FakeTaggingCredentialStore(apiKey: nil)
+        )
+
+        let result = await services.answerReaderQuestion(
+            "What does this mean?",
+            for: paper,
+            selection: selection,
+            settings: settings,
+            documentContext: .empty
+        )
+
+        XCTAssertNil(result)
+        XCTAssertEqual(answerer.callCount, 0)
+        XCTAssertEqual(services.presentedError?.message, "Save an API key in Keychain to enable AI features.")
+    }
+
+    func testAnswerReaderQuestionSurfacesGeneratorUnavailable() async throws {
+        let settings = UserSettings(aiTaggingEnabled: false)
+        let paper = Paper(title: "Annotated")
+        let selection = try XCTUnwrap(
+            ReaderSelectionSnapshot(
+                pageIndex: 0,
+                quotedText: "Important quote",
+                rects: [CGRect(x: 10, y: 22, width: 90, height: 12)]
+            )
+        )
+
+        let services = AppServices(
+            importService: PaperImportService(
+                metadataResolver: StubMetadataResolver(
+                    metadata: ResolvedPaperMetadata(
+                        title: "",
+                        authors: [],
+                        abstractText: "",
+                        sourceURL: nil,
+                        pdfURL: nil
+                    )
+                )
+            ),
+            reminderService: ReminderService(center: FakeNotificationCenter()),
+            taggingCredentialStore: FakeTaggingCredentialStore(apiKey: "sk-test")
+        )
+
+        let result = await services.answerReaderQuestion(
+            "What does this mean?",
+            for: paper,
+            selection: selection,
+            settings: settings,
+            documentContext: .empty
+        )
+
+        XCTAssertNil(result)
+        XCTAssertEqual(services.presentedError?.message, "Ask AI is not available in this build.")
+    }
+
+    func testAnswerReaderQuestionBuildsPayloadWithMetadataAndTruncatedDocumentContext() async throws {
+        let container = try TestSupport.makeInMemoryContainer()
+        let context = ModelContext(container)
+        let settings = UserSettings(aiTaggingEnabled: false)
+        let paper = Paper(
+            title: "Transformer Notes",
+            authors: ["Author One", "Author Two"],
+            abstractText: "This paper studies how transformer scaling changes performance.",
+            status: .scheduled
+        )
+        let firstTag = Tag(name: "nlp")
+        let secondTag = Tag(name: "transformers")
+        paper.tags = [firstTag, secondTag]
+        context.insert(settings)
+        context.insert(firstTag)
+        context.insert(secondTag)
+        context.insert(paper)
+
+        let answerer = SpyReaderAnswerer { input, configuration in
+            XCTAssertEqual(configuration.model, "gpt-4o-mini")
+            XCTAssertEqual(input.question, "Why does this matter?")
+            XCTAssertEqual(input.quotedText, "A useful passage")
+            XCTAssertEqual(input.pageNumber, 2)
+            XCTAssertEqual(input.paperTitle, "Transformer Notes")
+            XCTAssertEqual(input.authorsText, "Author One, Author Two")
+            XCTAssertEqual(input.abstractText, "This paper studies how transformer scaling changes performance.")
+            XCTAssertEqual(input.tagNames, ["nlp", "transformers"])
+            XCTAssertTrue(input.documentWasTruncated)
+            XCTAssertEqual(input.documentText, "token token token token token token token token to")
+            return "It anchors the paper's central claim."
+        }
+        let selection = try XCTUnwrap(
+            ReaderSelectionSnapshot(
+                pageIndex: 1,
+                quotedText: "A useful passage",
+                rects: [CGRect(x: 12, y: 40, width: 100, height: 16)]
+            )
+        )
+
+        let services = AppServices(
+            importService: PaperImportService(
+                metadataResolver: StubMetadataResolver(
+                    metadata: ResolvedPaperMetadata(
+                        title: "",
+                        authors: [],
+                        abstractText: "",
+                        sourceURL: nil,
+                        pdfURL: nil
+                    )
+                )
+            ),
+            readerAnswerer: answerer,
+            reminderService: ReminderService(center: FakeNotificationCenter()),
+            taggingCredentialStore: FakeTaggingCredentialStore(apiKey: "sk-test")
+        )
+
+        let documentContext = ReaderAskAIDocumentContext.make(
+            from: String(repeating: "token ", count: 20),
+            limit: 50
+        )
+        let result = await services.answerReaderQuestion(
+            "Why does this matter?",
+            for: paper,
+            selection: selection,
+            settings: settings,
+            documentContext: documentContext
+        )
+
+        XCTAssertEqual(result, "It anchors the paper's central claim.")
+        XCTAssertEqual(answerer.callCount, 1)
+        XCTAssertNil(services.presentedError)
+        XCTAssertEqual(try context.fetchCount(FetchDescriptor<PaperAnnotation>()), 0)
+    }
+
     func testDuplicateImportReturnsExistingPaperWithoutMutatingQueue() async throws {
         let container = try TestSupport.makeInMemoryContainer()
         let context = ModelContext(container)

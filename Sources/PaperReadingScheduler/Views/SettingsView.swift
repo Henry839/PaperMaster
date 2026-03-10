@@ -245,7 +245,7 @@ struct SettingsView: View {
             VStack(alignment: .leading, spacing: 4) {
                 Text("AI Provider")
                     .font(.title3.weight(.semibold))
-                Text("Paper Fusion Reactor and optional import auto-tagging both use this OpenAI-compatible provider.")
+                Text("Reader Ask AI, Paper Fusion Reactor, and optional import auto-tagging all use this OpenAI-compatible provider.")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
             }
@@ -287,7 +287,7 @@ struct SettingsView: View {
                 .font(.footnote.weight(.semibold))
                 .foregroundStyle(readinessColor(for: providerReadiness))
 
-            Text("Turn on the import toggle if you want new papers auto-tagged. Fusion Reactor can still use the provider even when import auto-tagging is off.")
+            Text("Turn on the import toggle if you want new papers auto-tagged. Reader Ask AI and Fusion Reactor can still use the provider even when import auto-tagging is off.")
                 .font(.footnote)
                 .foregroundStyle(.secondary)
         }

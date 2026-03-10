@@ -71,6 +71,29 @@ final class SpyPaperFusionGenerator: PaperFusionGenerating, @unchecked Sendable 
     }
 }
 
+final class SpyReaderAnswerer: ReaderAnswerGenerating, @unchecked Sendable {
+    private(set) var inputs: [ReaderAskAIInput] = []
+    private let handler: @Sendable (ReaderAskAIInput, AIProviderConfiguration) throws -> String
+
+    init(
+        handler: @escaping @Sendable (ReaderAskAIInput, AIProviderConfiguration) throws -> String
+    ) {
+        self.handler = handler
+    }
+
+    var callCount: Int {
+        inputs.count
+    }
+
+    func answerQuestion(
+        for input: ReaderAskAIInput,
+        configuration: AIProviderConfiguration
+    ) async throws -> String {
+        inputs.append(input)
+        return try handler(input, configuration)
+    }
+}
+
 final class SpyPublicationEnricher: PublicationEnriching, @unchecked Sendable {
     private(set) var requests: [PublicationEnrichmentRequest] = []
     private let handler: @Sendable (PublicationEnrichmentRequest) -> PublicationEnrichmentResult
@@ -123,6 +146,14 @@ final class FakeTextClipboard: TextClipboardWriting, @unchecked Sendable {
 
     func setString(_ string: String) {
         copiedStrings.append(string)
+    }
+}
+
+struct StubReaderDocumentContextLoader: ReaderDocumentContextLoading {
+    let context: ReaderAskAIDocumentContext
+
+    func loadDocumentContext(from fileURL: URL) -> ReaderAskAIDocumentContext {
+        context
     }
 }
 

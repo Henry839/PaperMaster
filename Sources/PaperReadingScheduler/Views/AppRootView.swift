@@ -171,8 +171,12 @@ struct AppRootView: View {
 
     @ViewBuilder
     private func readerSheet(for presentation: ReaderPresentation) -> some View {
-        if let paper = papers.first(where: { $0.id == presentation.paperID }) {
-            ReaderView(paper: paper, fileURL: presentation.fileURL)
+        if let paper = papers.first(where: { $0.id == presentation.paperID }),
+           let settings {
+            ReaderView(paper: paper, fileURL: presentation.fileURL, settings: settings)
+        } else if papers.contains(where: { $0.id == presentation.paperID }) {
+            ProgressView()
+                .frame(minWidth: 720, minHeight: 520)
         } else {
             ContentUnavailableView(
                 "Paper unavailable",
