@@ -230,6 +230,7 @@ enum TestSupport {
     static func makeInMemoryContainer() throws -> ModelContainer {
         try ModelContainer(
             for: Paper.self,
+            PaperAnnotation.self,
             Tag.self,
             UserSettings.self,
             FeedbackEntry.self,

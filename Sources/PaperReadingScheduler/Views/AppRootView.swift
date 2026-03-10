@@ -122,9 +122,7 @@ struct AppRootView: View {
             .sheet(isPresented: feedbackSheetBinding) {
                 FeedbackCaptureSheet(snapshot: feedbackSnapshot)
             }
-            .sheet(item: readerPresentationBinding) { presentation in
-                ReaderView(presentation: presentation)
-            }
+            .sheet(item: readerPresentationBinding, content: readerSheet)
             .toolbar {
                 toolbarContent
             }
@@ -169,6 +167,20 @@ struct AppRootView: View {
                 noticeBanner
             }
             .animation(.snappy(duration: 0.22), value: services.presentedNotice?.id)
+    }
+
+    @ViewBuilder
+    private func readerSheet(for presentation: ReaderPresentation) -> some View {
+        if let paper = papers.first(where: { $0.id == presentation.paperID }) {
+            ReaderView(paper: paper, fileURL: presentation.fileURL)
+        } else {
+            ContentUnavailableView(
+                "Paper unavailable",
+                systemImage: "doc.slash",
+                description: Text("This paper is no longer available in the local library.")
+            )
+            .frame(minWidth: 720, minHeight: 520)
+        }
     }
 
     private var navigationView: some View {

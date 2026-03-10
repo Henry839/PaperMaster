@@ -47,7 +47,7 @@ struct PersistentStoreController {
             return try makePersistentLaunchSetup()
         } catch {
             let container = try! ModelContainer(
-                for: Schema(versionedSchema: PaperReadingSchedulerSchemaV3.self),
+                for: Schema(versionedSchema: PaperReadingSchedulerSchemaV4.self),
                 migrationPlan: PaperReadingSchedulerMigrationPlan.self,
                 configurations: ModelConfiguration(isStoredInMemoryOnly: true)
             )
@@ -246,6 +246,7 @@ struct PersistentStoreController {
         let snapshot = try CurrentStoreSQLiteReader.read(from: sourceStoreURL)
         let destinationContainer = try makeCurrentContainer(at: destinationStoreURL)
         let destinationContext = ModelContext(destinationContainer)
+        let annotationsByPaperRowID = Dictionary(grouping: snapshot.annotations, by: \.paperRowID)
 
         for settingsEntry in snapshot.settings {
             destinationContext.insert(
@@ -295,6 +296,22 @@ struct PersistentStoreController {
                 tags: Tag.buildList(from: paperEntry.tagNames)
             )
             destinationContext.insert(paper)
+
+            for annotationEntry in annotationsByPaperRowID[paperEntry.rowID] ?? [] {
+                destinationContext.insert(
+                    PaperAnnotation(
+                        id: annotationEntry.id,
+                        paper: paper,
+                        pageIndex: annotationEntry.pageIndex,
+                        quotedText: annotationEntry.quotedText,
+                        noteText: annotationEntry.noteText,
+                        color: ReaderHighlightColor(rawValue: annotationEntry.colorRawValue) ?? .yellow,
+                        rectPayload: annotationEntry.rectPayload,
+                        createdAt: annotationEntry.createdAt,
+                        updatedAt: annotationEntry.updatedAt
+                    )
+                )
+            }
         }
 
         for feedbackEntry in snapshot.feedbackEntries {
@@ -321,7 +338,7 @@ struct PersistentStoreController {
     }
 
     private func makeCurrentContainer(at storeURL: URL) throws -> ModelContainer {
-        let schema = Schema(versionedSchema: PaperReadingSchedulerSchemaV3.self)
+        let schema = Schema(versionedSchema: PaperReadingSchedulerSchemaV4.self)
         let configuration = ModelConfiguration(
             "HenryPaper",
             schema: schema,
@@ -448,6 +465,7 @@ private enum PersistentStoreControllerError: LocalizedError {
 
 private struct CurrentStoreSnapshot {
     let papers: [CurrentStorePaperRecord]
+    let annotations: [CurrentStoreAnnotationRecord]
     let settings: [CurrentStoreSettingsRecord]
     let feedbackEntries: [CurrentStoreFeedbackEntryRecord]
 }
@@ -475,6 +493,18 @@ private struct CurrentStorePaperRecord {
     let notes: String
     let autoTaggingStatusMessage: String?
     var tagNames: [String]
+}
+
+private struct CurrentStoreAnnotationRecord {
+    let id: UUID
+    let paperRowID: Int64
+    let pageIndex: Int
+    let quotedText: String
+    let noteText: String
+    let colorRawValue: String
+    let rectPayload: String
+    let createdAt: Date
+    let updatedAt: Date
 }
 
 private struct CurrentStoreSettingsRecord {
@@ -520,6 +550,7 @@ private enum CurrentStoreSQLiteReader {
 
         return CurrentStoreSnapshot(
             papers: papers,
+            annotations: try readAnnotations(from: database),
             settings: try readSettings(from: database),
             feedbackEntries: try readFeedbackEntries(from: database)
         )
@@ -566,6 +597,39 @@ private enum CurrentStoreSQLiteReader {
         }
 
         return papers
+    }
+
+    private static func readAnnotations(from database: OpaquePointer) throws -> [CurrentStoreAnnotationRecord] {
+        guard tableExists("ZPAPERANNOTATION", in: database) else {
+            return []
+        }
+
+        let sql = """
+        SELECT ZID, ZPAPER, ZPAGEINDEX, ZQUOTEDTEXT, ZNOTETEXT, ZCOLORRAWVALUE,
+               ZRECTPAYLOAD, ZCREATEDAT, ZUPDATEDAT
+        FROM ZPAPERANNOTATION
+        """
+        let statement = try SQLiteStatement(database: database, sql: sql)
+        defer { statement.finalize() }
+
+        var annotations: [CurrentStoreAnnotationRecord] = []
+        while statement.step() == SQLITE_ROW {
+            annotations.append(
+                CurrentStoreAnnotationRecord(
+                    id: try statement.uuid(at: 0),
+                    paperRowID: statement.int64(at: 1),
+                    pageIndex: Int(statement.int64(at: 2)),
+                    quotedText: statement.string(at: 3) ?? "",
+                    noteText: statement.string(at: 4) ?? "",
+                    colorRawValue: statement.string(at: 5) ?? ReaderHighlightColor.yellow.rawValue,
+                    rectPayload: statement.string(at: 6) ?? "[]",
+                    createdAt: statement.date(at: 7) ?? .now,
+                    updatedAt: statement.date(at: 8) ?? .now
+                )
+            )
+        }
+
+        return annotations
     }
 
     private static func readTagNames(from database: OpaquePointer) throws -> [Int64: [String]] {
@@ -646,6 +710,22 @@ private enum CurrentStoreSQLiteReader {
             .split(separator: ",")
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
             .filter { $0.isEmpty == false }
+    }
+
+    private static func tableExists(_ tableName: String, in database: OpaquePointer) -> Bool {
+        let escapedTableName = tableName.replacingOccurrences(of: "'", with: "''")
+        let sql = """
+        SELECT 1
+        FROM sqlite_master
+        WHERE type = 'table' AND name = '\(escapedTableName)'
+        LIMIT 1
+        """
+        guard let statement = try? SQLiteStatement(database: database, sql: sql) else {
+            return false
+        }
+        defer { statement.finalize() }
+
+        return statement.step() == SQLITE_ROW
     }
 }
 
@@ -1077,11 +1157,210 @@ enum PaperReadingSchedulerSchemaV3: VersionedSchema {
     static var models: [any PersistentModel.Type] {
         [Paper.self, Tag.self, UserSettings.self, FeedbackEntry.self]
     }
+
+    @Model
+    final class Paper {
+        @Attribute(.unique) var id: UUID
+        var title: String
+        var authorsText: String
+        var abstractText: String
+        var venueKey: String?
+        var venueName: String?
+        var doi: String?
+        var bibtex: String?
+        var sourceURLString: String?
+        var pdfURLString: String?
+        var cachedPDFPath: String?
+        var managedPDFLocalPath: String?
+        var managedPDFRemoteURLString: String?
+        var statusRawValue: String
+        var queuePosition: Int
+        var dateAdded: Date
+        var dueDate: Date?
+        var manualDueDateOverride: Date?
+        var startedAt: Date?
+        var completedAt: Date?
+        var notes: String
+        var autoTaggingStatusMessage: String?
+        @Relationship(deleteRule: .cascade, inverse: \Tag.paper) var tags: [Tag]
+
+        init(
+            id: UUID = UUID(),
+            title: String,
+            authorsText: String = "",
+            abstractText: String = "",
+            venueKey: String? = nil,
+            venueName: String? = nil,
+            doi: String? = nil,
+            bibtex: String? = nil,
+            sourceURLString: String? = nil,
+            pdfURLString: String? = nil,
+            cachedPDFPath: String? = nil,
+            managedPDFLocalPath: String? = nil,
+            managedPDFRemoteURLString: String? = nil,
+            statusRawValue: String = PaperStatus.inbox.rawValue,
+            queuePosition: Int = 0,
+            dateAdded: Date = .now,
+            dueDate: Date? = nil,
+            manualDueDateOverride: Date? = nil,
+            startedAt: Date? = nil,
+            completedAt: Date? = nil,
+            notes: String = "",
+            autoTaggingStatusMessage: String? = nil,
+            tags: [Tag] = []
+        ) {
+            self.id = id
+            self.title = title
+            self.authorsText = authorsText
+            self.abstractText = abstractText
+            self.venueKey = venueKey
+            self.venueName = venueName
+            self.doi = doi
+            self.bibtex = bibtex
+            self.sourceURLString = sourceURLString
+            self.pdfURLString = pdfURLString
+            self.cachedPDFPath = cachedPDFPath
+            self.managedPDFLocalPath = managedPDFLocalPath
+            self.managedPDFRemoteURLString = managedPDFRemoteURLString
+            self.statusRawValue = statusRawValue
+            self.queuePosition = queuePosition
+            self.dateAdded = dateAdded
+            self.dueDate = dueDate
+            self.manualDueDateOverride = manualDueDateOverride
+            self.startedAt = startedAt
+            self.completedAt = completedAt
+            self.notes = notes
+            self.autoTaggingStatusMessage = autoTaggingStatusMessage
+            self.tags = tags
+        }
+    }
+
+    @Model
+    final class Tag {
+        var name: String
+        var paper: Paper?
+
+        init(name: String, paper: Paper? = nil) {
+            self.name = Tag.normalize(name)
+            self.paper = paper
+        }
+
+        static func normalize(_ value: String) -> String {
+            value
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+                .lowercased()
+        }
+    }
+
+    @Model
+    final class UserSettings {
+        @Attribute(.unique) var id: UUID
+        var papersPerDay: Int
+        var dailyReminderTime: Date
+        var autoCachePDFs: Bool
+        var defaultImportBehaviorRawValue: String
+        var paperStorageModeRawValueStorage: String?
+        var customPaperStoragePathStorage: String?
+        var remotePaperStorageHostStorage: String?
+        var remotePaperStoragePortStorage: Int?
+        var remotePaperStorageUsernameStorage: String?
+        var remotePaperStorageDirectoryStorage: String?
+        var aiTaggingEnabled: Bool
+        var aiTaggingBaseURLString: String
+        var aiTaggingModel: String
+
+        init(
+            id: UUID = UUID(),
+            papersPerDay: Int = 1,
+            dailyReminderTime: Date = UserSettings.defaultReminderDate(),
+            autoCachePDFs: Bool = false,
+            defaultImportBehaviorRawValue: String = ImportBehavior.scheduleImmediately.rawValue,
+            paperStorageModeRawValueStorage: String? = PaperStorageMode.defaultLocal.rawValue,
+            customPaperStoragePathStorage: String? = "",
+            remotePaperStorageHostStorage: String? = "",
+            remotePaperStoragePortStorage: Int? = 22,
+            remotePaperStorageUsernameStorage: String? = "",
+            remotePaperStorageDirectoryStorage: String? = "",
+            aiTaggingEnabled: Bool = false,
+            aiTaggingBaseURLString: String = "https://api.openai.com/v1",
+            aiTaggingModel: String = "gpt-4o-mini"
+        ) {
+            self.id = id
+            self.papersPerDay = papersPerDay
+            self.dailyReminderTime = dailyReminderTime
+            self.autoCachePDFs = autoCachePDFs
+            self.defaultImportBehaviorRawValue = defaultImportBehaviorRawValue
+            self.paperStorageModeRawValueStorage = paperStorageModeRawValueStorage
+            self.customPaperStoragePathStorage = customPaperStoragePathStorage
+            self.remotePaperStorageHostStorage = remotePaperStorageHostStorage
+            self.remotePaperStoragePortStorage = remotePaperStoragePortStorage
+            self.remotePaperStorageUsernameStorage = remotePaperStorageUsernameStorage
+            self.remotePaperStorageDirectoryStorage = remotePaperStorageDirectoryStorage
+            self.aiTaggingEnabled = aiTaggingEnabled
+            self.aiTaggingBaseURLString = aiTaggingBaseURLString
+            self.aiTaggingModel = aiTaggingModel
+        }
+
+        static func defaultReminderDate(calendar: Calendar = .current) -> Date {
+            let now = Date()
+            return calendar.date(
+                bySettingHour: 9,
+                minute: 0,
+                second: 0,
+                of: now
+            ) ?? now
+        }
+    }
+
+    @Model
+    final class FeedbackEntry {
+        @Attribute(.unique) var id: UUID
+        var createdAt: Date
+        var screenRawValue: String
+        var screenTitle: String
+        var selectedPaperID: UUID?
+        var selectedPaperTitle: String?
+        var selectedPaperStatusRawValue: String?
+        var intendedAction: String
+        var feedbackText: String
+
+        init(
+            id: UUID = UUID(),
+            createdAt: Date = .now,
+            screenRawValue: String,
+            screenTitle: String,
+            selectedPaperID: UUID? = nil,
+            selectedPaperTitle: String? = nil,
+            selectedPaperStatusRawValue: String? = nil,
+            intendedAction: String,
+            feedbackText: String
+        ) {
+            self.id = id
+            self.createdAt = createdAt
+            self.screenRawValue = screenRawValue
+            self.screenTitle = screenTitle
+            self.selectedPaperID = selectedPaperID
+            self.selectedPaperTitle = selectedPaperTitle
+            self.selectedPaperStatusRawValue = selectedPaperStatusRawValue
+            self.intendedAction = intendedAction
+            self.feedbackText = feedbackText
+        }
+    }
+}
+
+enum PaperReadingSchedulerSchemaV4: VersionedSchema {
+    static var versionIdentifier: Schema.Version {
+        Schema.Version(4, 0, 0)
+    }
+
+    static var models: [any PersistentModel.Type] {
+        [Paper.self, PaperAnnotation.self, Tag.self, UserSettings.self, FeedbackEntry.self]
+    }
 }
 
 enum PaperReadingSchedulerMigrationPlan: SchemaMigrationPlan {
     static var schemas: [any VersionedSchema.Type] {
-        [PaperReadingSchedulerSchemaV2.self, PaperReadingSchedulerSchemaV3.self]
+        [PaperReadingSchedulerSchemaV2.self, PaperReadingSchedulerSchemaV3.self, PaperReadingSchedulerSchemaV4.self]
     }
 
     static var stages: [MigrationStage] {
@@ -1089,6 +1368,10 @@ enum PaperReadingSchedulerMigrationPlan: SchemaMigrationPlan {
             .lightweight(
                 fromVersion: PaperReadingSchedulerSchemaV2.self,
                 toVersion: PaperReadingSchedulerSchemaV3.self
+            ),
+            .lightweight(
+                fromVersion: PaperReadingSchedulerSchemaV3.self,
+                toVersion: PaperReadingSchedulerSchemaV4.self
             )
         ]
     }

@@ -313,6 +313,50 @@ final class AppServices {
         }
     }
 
+    @discardableResult
+    func saveAnnotation(
+        for paper: Paper,
+        selection: ReaderSelectionSnapshot,
+        color: ReaderHighlightColor,
+        context: ModelContext
+    ) -> PaperAnnotation? {
+        if let existingAnnotation = paper.annotations.first(where: { $0.matches(selection) }) {
+            if existingAnnotation.color != color {
+                existingAnnotation.color = color
+                existingAnnotation.touch()
+            }
+            persistNotes(context: context)
+            return existingAnnotation
+        }
+
+        let annotation = PaperAnnotation(
+            paper: paper,
+            pageIndex: selection.pageIndex,
+            quotedText: selection.quotedText,
+            color: color,
+            rectPayload: selection.rectPayload
+        )
+        context.insert(annotation)
+        persistNotes(context: context)
+        return annotation
+    }
+
+    func updateAnnotationColor(
+        _ annotation: PaperAnnotation,
+        color: ReaderHighlightColor,
+        context: ModelContext
+    ) {
+        guard annotation.color != color else { return }
+        annotation.color = color
+        annotation.touch()
+        persistNotes(context: context)
+    }
+
+    func deleteAnnotation(_ annotation: PaperAnnotation, context: ModelContext) {
+        context.delete(annotation)
+        persistNotes(context: context)
+    }
+
     func loadTaggingAPIKey() -> String {
         do {
             return try taggingCredentialStore.loadAPIKey() ?? ""

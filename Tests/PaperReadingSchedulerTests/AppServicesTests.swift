@@ -43,6 +43,82 @@ final class AppServicesTests: XCTestCase {
         XCTAssertNil(paper.autoTaggingStatusMessage)
     }
 
+    func testSaveAnnotationCreatesAndDeduplicatesMatchingSelection() throws {
+        let container = try TestSupport.makeInMemoryContainer()
+        let context = ModelContext(container)
+        let paper = Paper(title: "Annotated")
+        context.insert(paper)
+
+        let services = AppServices(
+            importService: PaperImportService(
+                metadataResolver: StubMetadataResolver(
+                    metadata: ResolvedPaperMetadata(
+                        title: "",
+                        authors: [],
+                        abstractText: "",
+                        sourceURL: nil,
+                        pdfURL: nil
+                    )
+                )
+            ),
+            reminderService: ReminderService(center: FakeNotificationCenter())
+        )
+        let selection = try XCTUnwrap(
+            ReaderSelectionSnapshot(
+                pageIndex: 0,
+                quotedText: "A useful sentence",
+                rects: [CGRect(x: 12, y: 40, width: 100, height: 16)]
+            )
+        )
+
+        let first = try XCTUnwrap(
+            services.saveAnnotation(for: paper, selection: selection, color: .yellow, context: context)
+        )
+        let second = try XCTUnwrap(
+            services.saveAnnotation(for: paper, selection: selection, color: .pink, context: context)
+        )
+
+        XCTAssertEqual(first.id, second.id)
+        XCTAssertEqual(second.color, .pink)
+        XCTAssertEqual(try context.fetchCount(FetchDescriptor<PaperAnnotation>()), 1)
+    }
+
+    func testDeleteAnnotationRemovesHighlight() throws {
+        let container = try TestSupport.makeInMemoryContainer()
+        let context = ModelContext(container)
+        let paper = Paper(title: "Annotated")
+        context.insert(paper)
+
+        let services = AppServices(
+            importService: PaperImportService(
+                metadataResolver: StubMetadataResolver(
+                    metadata: ResolvedPaperMetadata(
+                        title: "",
+                        authors: [],
+                        abstractText: "",
+                        sourceURL: nil,
+                        pdfURL: nil
+                    )
+                )
+            ),
+            reminderService: ReminderService(center: FakeNotificationCenter())
+        )
+        let selection = try XCTUnwrap(
+            ReaderSelectionSnapshot(
+                pageIndex: 1,
+                quotedText: "Delete me",
+                rects: [CGRect(x: 4, y: 22, width: 88, height: 12)]
+            )
+        )
+        let annotation = try XCTUnwrap(
+            services.saveAnnotation(for: paper, selection: selection, color: .mint, context: context)
+        )
+
+        services.deleteAnnotation(annotation, context: context)
+
+        XCTAssertEqual(try context.fetchCount(FetchDescriptor<PaperAnnotation>()), 0)
+    }
+
     func testDuplicateImportReturnsExistingPaperWithoutMutatingQueue() async throws {
         let container = try TestSupport.makeInMemoryContainer()
         let context = ModelContext(container)

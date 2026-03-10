@@ -74,7 +74,7 @@ final class PersistentStoreControllerTests: XCTestCase {
         XCTAssertTrue(FileManager.default.fileExists(atPath: controller.currentStoreURL.path))
     }
 
-    func testMakeLaunchSetupMigratesV2StoreToV3StorageDefaults() throws {
+    func testMakeLaunchSetupMigratesV2StoreToV4StorageDefaults() throws {
         let rootDirectoryURL = try TestSupport.makeTemporaryDirectory()
         defer { try? FileManager.default.removeItem(at: rootDirectoryURL) }
 
@@ -100,6 +100,28 @@ final class PersistentStoreControllerTests: XCTestCase {
         XCTAssertNil(papers.first?.managedPDFLocalURL)
         XCTAssertNil(papers.first?.managedPDFRemoteURL)
         XCTAssertEqual(papers.first?.cachedPDFURL?.path, "/tmp/cached-v2.pdf")
+        XCTAssertEqual(papers.first?.annotations.count, 0)
+    }
+
+    func testMakeLaunchSetupMigratesV3StoreToV4WithEmptyAnnotations() throws {
+        let rootDirectoryURL = try TestSupport.makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: rootDirectoryURL) }
+
+        let controller = PersistentStoreController(applicationSupportDirectoryURL: rootDirectoryURL)
+        try seedV3Store(at: controller.currentStoreURL)
+
+        let setup = controller.makeLaunchSetup()
+        let context = ModelContext(setup.container)
+        let papers = try context.fetch(FetchDescriptor<Paper>(sortBy: [SortDescriptor(\.queuePosition)]))
+
+        XCTAssertEqual(setup.storeURL?.path, controller.currentStoreURL.path)
+        XCTAssertNil(setup.startupNoticeMessage)
+        XCTAssertNil(setup.startupErrorMessage)
+        XCTAssertEqual(papers.count, 1)
+        XCTAssertEqual(papers.first?.title, "V3 Paper")
+        XCTAssertEqual(papers.first?.notes, "Existing notes survive.")
+        XCTAssertEqual(papers.first?.managedPDFLocalURL?.path, "/tmp/v3-paper.pdf")
+        XCTAssertEqual(papers.first?.annotations.count, 0)
     }
 
     private func seedLegacyStore(at storeURL: URL) throws {
@@ -209,6 +231,54 @@ final class PersistentStoreControllerTests: XCTestCase {
             queuePosition: 0,
             dateAdded: Date(timeIntervalSince1970: 1_700_100_000),
             notes: "V2 notes"
+        )
+
+        context.insert(settings)
+        context.insert(paper)
+        try context.save()
+    }
+
+    private func seedV3Store(at storeURL: URL) throws {
+        try FileManager.default.createDirectory(
+            at: storeURL.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        let schema = Schema(versionedSchema: PaperReadingSchedulerSchemaV3.self)
+        let configuration = ModelConfiguration(
+            "HenryPaper",
+            schema: schema,
+            url: storeURL,
+            cloudKitDatabase: .none
+        )
+        let container = try ModelContainer(for: schema, configurations: configuration)
+        let context = ModelContext(container)
+
+        let settings = PaperReadingSchedulerSchemaV3.UserSettings(
+            papersPerDay: 1,
+            dailyReminderTime: TestSupport.reminderDate(hour: 7, minute: 30),
+            autoCachePDFs: false,
+            defaultImportBehaviorRawValue: ImportBehavior.scheduleImmediately.rawValue,
+            paperStorageModeRawValueStorage: PaperStorageMode.defaultLocal.rawValue,
+            customPaperStoragePathStorage: "",
+            remotePaperStorageHostStorage: "",
+            remotePaperStoragePortStorage: 22,
+            remotePaperStorageUsernameStorage: "",
+            remotePaperStorageDirectoryStorage: "",
+            aiTaggingEnabled: false,
+            aiTaggingBaseURLString: "https://api.openai.com/v1",
+            aiTaggingModel: "gpt-4o-mini"
+        )
+        let paper = PaperReadingSchedulerSchemaV3.Paper(
+            title: "V3 Paper",
+            authorsText: "Ada Lovelace",
+            abstractText: "Migrated from V3.",
+            sourceURLString: "https://example.com/v3-paper",
+            pdfURLString: "https://example.com/v3-paper.pdf",
+            managedPDFLocalPath: "/tmp/v3-paper.pdf",
+            statusRawValue: PaperStatus.reading.rawValue,
+            queuePosition: 0,
+            dateAdded: Date(timeIntervalSince1970: 1_700_200_000),
+            notes: "Existing notes survive."
         )
 
         context.insert(settings)

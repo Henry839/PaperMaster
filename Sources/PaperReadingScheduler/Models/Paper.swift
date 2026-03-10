@@ -26,6 +26,7 @@ final class Paper {
     var notes: String
     var autoTaggingStatusMessage: String?
     @Relationship(deleteRule: .cascade, inverse: \Tag.paper) var tags: [Tag]
+    @Relationship(deleteRule: .cascade, inverse: \PaperAnnotation.paper) var annotations: [PaperAnnotation]
 
     init(
         id: UUID = UUID(),
@@ -50,7 +51,8 @@ final class Paper {
         completedAt: Date? = nil,
         notes: String = "",
         autoTaggingStatusMessage: String? = nil,
-        tags: [Tag] = []
+        tags: [Tag] = [],
+        annotations: [PaperAnnotation] = []
     ) {
         self.id = id
         self.title = title
@@ -75,6 +77,7 @@ final class Paper {
         self.notes = notes
         self.autoTaggingStatusMessage = autoTaggingStatusMessage
         self.tags = tags
+        self.annotations = annotations
     }
 
     var status: PaperStatus {
