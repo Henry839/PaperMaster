@@ -2,7 +2,7 @@ import SwiftData
 import SwiftUI
 
 @main
-struct PaperReadingSchedulerApp: App {
+struct PaperMasterApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @State private var services: AppServices
     @State private var router = AppRouter()

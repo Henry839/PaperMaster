@@ -26,7 +26,7 @@ struct KeychainTaggingCredentialStore: TaggingCredentialStoring {
     private let account: String
 
     init(
-        service: String = Bundle.main.bundleIdentifier ?? "PaperReadingScheduler",
+        service: String = Bundle.main.bundleIdentifier ?? "PaperMaster",
         account: String = "ai-tagging-api-key"
     ) {
         self.service = service

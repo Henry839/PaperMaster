@@ -1,5 +1,5 @@
 import XCTest
-@testable import PaperReadingScheduler
+@testable import PaperMaster
 
 final class QueueDragPreviewTests: XCTestCase {
     func testReorderedIDsMoveDraggedPaperAfterHoveredRowWhenDraggingDownwardAcrossMultipleItems() {

@@ -21,9 +21,9 @@ struct PDFCacheService: Sendable {
         self.networking = networking
         self.fileManager = fileManager
         let defaultDirectory = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first?
-            .appendingPathComponent("PaperReadingScheduler", isDirectory: true)
+            .appendingPathComponent("PaperMaster", isDirectory: true)
             .appendingPathComponent("PDFCache", isDirectory: true)
-        self.cacheDirectoryURL = cacheDirectoryURL ?? defaultDirectory ?? URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("PaperReadingScheduler-PDFCache", isDirectory: true)
+        self.cacheDirectoryURL = cacheDirectoryURL ?? defaultDirectory ?? URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("PaperMaster-PDFCache", isDirectory: true)
     }
 
     @MainActor

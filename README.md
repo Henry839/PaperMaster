@@ -48,7 +48,7 @@ From the project root:
 This generates:
 
 ```text
-dist/Henry稍后读.app
+dist/PaperMaster.app
 ```
 
 For a debug bundle:
@@ -65,7 +65,7 @@ Common commands from the project root:
 
 ```bash
 ./Scripts/swift-overlay.sh test
-./Scripts/swift-overlay.sh run PaperReadingScheduler
+./Scripts/swift-overlay.sh run PaperMaster
 ```
 
 The overlay script exists so builds and tests can still run when the local Swift macro host trust chain is broken. `build-app.sh` uses the same overlay automatically.
@@ -90,10 +90,10 @@ The tagger expects an OpenAI-compatible `chat/completions` API.
 
 ## Project Layout
 
-- `Sources/PaperReadingScheduler/Models`: `SwiftData` models and enums such as `Paper`, `Tag`, `UserSettings`, and app navigation types.
-- `Sources/PaperReadingScheduler/Services`: metadata resolution, Crossref enrichment, import, paper storage, scheduling, tagging, fusion, reminders, PDF caching, and credential storage.
-- `Sources/PaperReadingScheduler/Views`: the macOS UI, including the import sheet, reader, paper detail view, fusion reactor, settings, and feedback capture flow.
-- `Sources/PaperReadingScheduler/App`: app bootstrap, dependency wiring, and routing.
-- `Tests/PaperReadingSchedulerTests`: unit tests for import, scheduling, metadata resolution, enrichment, reminders, tagging, feedback, and app services.
+- `Sources/PaperMaster/Models`: `SwiftData` models and enums such as `Paper`, `Tag`, `UserSettings`, and app navigation types.
+- `Sources/PaperMaster/Services`: metadata resolution, Crossref enrichment, import, paper storage, scheduling, tagging, fusion, reminders, PDF caching, and credential storage.
+- `Sources/PaperMaster/Views`: the macOS UI, including the import sheet, reader, paper detail view, fusion reactor, settings, and feedback capture flow.
+- `Sources/PaperMaster/App`: app bootstrap, dependency wiring, and routing.
+- `Tests/PaperMasterTests`: unit tests for import, scheduling, metadata resolution, enrichment, reminders, tagging, feedback, and app services.
 - `Scripts/build-app.sh`: builds a standalone `.app` bundle in `dist/`.
 - `Scripts/swift-overlay.sh`: runs Swift commands with the local toolchain overlay used by this repo.

@@ -147,14 +147,14 @@ struct PaperStorageService: Sendable {
         self.commandRunner = commandRunner
         self.fileManager = fileManager
         let fallbackDefaultDirectory = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask).first?
-            .appendingPathComponent("HenryPaper", isDirectory: true)
+            .appendingPathComponent("PaperMaster", isDirectory: true)
             .appendingPathComponent("Papers", isDirectory: true)
             ?? URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
-                .appendingPathComponent("HenryPaper", isDirectory: true)
+                .appendingPathComponent("PaperMaster", isDirectory: true)
                 .appendingPathComponent("Papers", isDirectory: true)
         self.defaultStorageDirectoryURL = defaultStorageDirectoryURL ?? fallbackDefaultDirectory
         self.temporaryRootDirectoryURL = temporaryRootDirectoryURL
-            ?? fileManager.temporaryDirectory.appendingPathComponent("HenryPaperPaperStorage", isDirectory: true)
+            ?? fileManager.temporaryDirectory.appendingPathComponent("PaperMasterPaperStorage", isDirectory: true)
     }
 
     @MainActor

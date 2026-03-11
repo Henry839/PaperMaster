@@ -1,6 +1,6 @@
 import Foundation
 import XCTest
-@testable import PaperReadingScheduler
+@testable import PaperMaster
 
 @MainActor
 final class PaperStorageServiceTests: XCTestCase {
@@ -122,7 +122,7 @@ final class PaperStorageServiceTests: XCTestCase {
     }
 
     func testKeychainPaperStorageCredentialStoreSavesLoadsAndDeletesPassword() throws {
-        let store = KeychainPaperStorageCredentialStore(service: "PaperReadingSchedulerTests.\(UUID().uuidString)")
+        let store = KeychainPaperStorageCredentialStore(service: "PaperMasterTests.\(UUID().uuidString)")
         let endpoint = PaperStorageRemoteEndpoint(host: "example.com", port: 22, username: "reader")
         defer { try? store.deletePassword(for: endpoint) }
 

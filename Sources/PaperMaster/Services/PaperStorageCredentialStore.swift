@@ -24,7 +24,7 @@ enum PaperStorageCredentialStoreError: LocalizedError {
 struct KeychainPaperStorageCredentialStore: PaperStorageCredentialStoring {
     private let service: String
 
-    init(service: String = Bundle.main.bundleIdentifier ?? "PaperReadingScheduler") {
+    init(service: String = Bundle.main.bundleIdentifier ?? "PaperMaster") {
         self.service = service
     }
 

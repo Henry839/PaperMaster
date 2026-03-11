@@ -1,6 +1,6 @@
 import Foundation
 import XCTest
-@testable import PaperReadingScheduler
+@testable import PaperMaster
 
 final class MetadataResolverTests: XCTestCase {
     func testArxivURLResolvesMetadataAndPDF() async throws {

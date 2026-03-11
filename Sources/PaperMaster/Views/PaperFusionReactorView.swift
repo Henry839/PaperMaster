@@ -229,7 +229,7 @@ struct PaperFusionReactorView: View {
     private func handleMaterialDrop(providers: [NSItemProvider]) -> Bool {
         guard providers.isEmpty == false else { return false }
 
-        Task {
+        Task { @MainActor in
             for provider in providers {
                 guard let identifier = await provider.loadDroppedText(),
                       let paperID = UUID(uuidString: identifier) else {
@@ -668,6 +668,7 @@ private struct FusionFurnaceView: View {
 }
 
 private extension NSItemProvider {
+    @MainActor
     func loadDroppedText() async -> String? {
         await withCheckedContinuation { continuation in
             guard hasItemConformingToTypeIdentifier(UTType.text.identifier) else {

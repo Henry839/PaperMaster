@@ -1,6 +1,6 @@
 import Foundation
 import XCTest
-@testable import PaperReadingScheduler
+@testable import PaperMaster
 
 final class ReaderAskAIServiceTests: XCTestCase {
     func testOpenAICompatibleReaderAnswererReturnsTrimmedAnswerText() async throws {

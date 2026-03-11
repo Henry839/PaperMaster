@@ -1,5 +1,5 @@
 import XCTest
-@testable import PaperReadingScheduler
+@testable import PaperMaster
 
 @MainActor
 final class FusionReactorSessionTests: XCTestCase {

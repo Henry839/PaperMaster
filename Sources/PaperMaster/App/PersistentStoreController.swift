@@ -27,11 +27,19 @@ struct PersistentStoreController {
     }
 
     var storeDirectoryURL: URL {
-        applicationSupportDirectoryURL.appendingPathComponent("HenryPaper", isDirectory: true)
+        applicationSupportDirectoryURL.appendingPathComponent("PaperMaster", isDirectory: true)
     }
 
     var currentStoreURL: URL {
-        storeDirectoryURL.appendingPathComponent("HenryPaper.store")
+        storeDirectoryURL.appendingPathComponent("PaperMaster.store")
+    }
+
+    var previousAppStoreDirectoryURL: URL {
+        applicationSupportDirectoryURL.appendingPathComponent("HenryPaper", isDirectory: true)
+    }
+
+    var previousAppStoreURL: URL {
+        previousAppStoreDirectoryURL.appendingPathComponent("HenryPaper.store")
     }
 
     var legacyStoreURL: URL {
@@ -47,14 +55,14 @@ struct PersistentStoreController {
             return try makePersistentLaunchSetup()
         } catch {
             let container = try! ModelContainer(
-                for: Schema(versionedSchema: PaperReadingSchedulerSchemaV4.self),
-                migrationPlan: PaperReadingSchedulerMigrationPlan.self,
+                for: Schema(versionedSchema: PaperMasterSchemaV4.self),
+                migrationPlan: PaperMasterMigrationPlan.self,
                 configurations: ModelConfiguration(isStoredInMemoryOnly: true)
             )
             return PersistentStoreSetup(
                 container: container,
                 startupNoticeMessage: nil,
-                startupErrorMessage: "HenryPaper could not open its local library. The app started with a temporary empty session. \(error.localizedDescription)",
+                startupErrorMessage: "PaperMaster could not open its local library. The app started with a temporary empty session. \(error.localizedDescription)",
                 storeURL: nil
             )
         }
@@ -76,6 +84,10 @@ struct PersistentStoreController {
             }
         }
 
+        if storeFamilyExists(at: previousAppStoreURL) {
+            return try migratePreviousAppStore()
+        }
+
         guard storeFamilyExists(at: legacyStoreURL) else {
             return PersistentStoreSetup(
                 container: try makeCurrentContainer(at: currentStoreURL),
@@ -86,6 +98,42 @@ struct PersistentStoreController {
         }
 
         return try migrateLegacyDefaultStore()
+    }
+
+    private func migratePreviousAppStore() throws -> PersistentStoreSetup {
+        let backupDirectoryURL = try makeTimestampedDirectory(
+            in: backupRootDirectoryURL,
+            prefix: "PreviousAppStore"
+        )
+        let backedUpStoreURL = try copyStoreFamily(from: previousAppStoreURL, toDirectory: backupDirectoryURL)
+
+        do {
+            let migrationSummary = try migrateCurrentSQLiteStore(
+                from: backedUpStoreURL,
+                to: currentStoreURL
+            )
+            let startupNoticeMessage = migrationSummary.migratedPaperCount > 0
+                ? "Recovered \(migrationSummary.migratedPaperCount) paper\(migrationSummary.migratedPaperCount == 1 ? "" : "s") from your previous HenryPaper library."
+                : "Recovered your previous HenryPaper library."
+            return PersistentStoreSetup(
+                container: migrationSummary.container,
+                startupNoticeMessage: startupNoticeMessage,
+                startupErrorMessage: nil,
+                storeURL: currentStoreURL
+            )
+        } catch {
+            try? quarantineStoreFamilyIfExists(
+                at: currentStoreURL,
+                prefix: "FailedPreviousAppMigration"
+            )
+            let container = try makeCurrentContainer(at: currentStoreURL)
+            return PersistentStoreSetup(
+                container: container,
+                startupNoticeMessage: nil,
+                startupErrorMessage: "PaperMaster could not migrate the previous HenryPaper library. The original database was preserved at \(backupDirectoryURL.path). A new empty library was created.",
+                storeURL: currentStoreURL
+            )
+        }
     }
 
     private func recoverCurrentStore(afterOpenError openError: Error) throws -> PersistentStoreSetup {
@@ -102,8 +150,8 @@ struct PersistentStoreController {
                 to: currentStoreURL
             )
             let startupNoticeMessage = migrationSummary.migratedPaperCount > 0
-                ? "Recovered \(migrationSummary.migratedPaperCount) paper\(migrationSummary.migratedPaperCount == 1 ? "" : "s") from your previous HenryPaper library."
-                : "Recovered your previous HenryPaper library."
+                ? "Recovered \(migrationSummary.migratedPaperCount) paper\(migrationSummary.migratedPaperCount == 1 ? "" : "s") from your previous PaperMaster library."
+                : "Recovered your previous PaperMaster library."
             return PersistentStoreSetup(
                 container: migrationSummary.container,
                 startupNoticeMessage: startupNoticeMessage,
@@ -116,7 +164,7 @@ struct PersistentStoreController {
             return PersistentStoreSetup(
                 container: container,
                 startupNoticeMessage: nil,
-                startupErrorMessage: "HenryPaper could not open the previous local library. A backup was preserved at \(backupDirectoryURL.path). A new empty library was created. \(openError.localizedDescription)",
+                startupErrorMessage: "PaperMaster could not open the previous local library. A backup was preserved at \(backupDirectoryURL.path). A new empty library was created. \(openError.localizedDescription)",
                 storeURL: currentStoreURL
             )
         }
@@ -152,7 +200,7 @@ struct PersistentStoreController {
             return PersistentStoreSetup(
                 container: container,
                 startupNoticeMessage: nil,
-                startupErrorMessage: "HenryPaper could not migrate the previous library. The original database was preserved at \(backupDirectoryURL.path). A new empty library was created.",
+                startupErrorMessage: "PaperMaster could not migrate the previous HenryPaper database. The original database was preserved at \(backupDirectoryURL.path). A new empty library was created.",
                 storeURL: currentStoreURL
             )
         }
@@ -162,9 +210,9 @@ struct PersistentStoreController {
         let sourceContainer = try makeLegacyContainer(at: sourceStoreURL)
         let sourceContext = ModelContext(sourceContainer)
 
-        let legacyPapers = try sourceContext.fetch(FetchDescriptor<PaperReadingSchedulerLegacySchemaV1.Paper>())
-        let legacySettings = try sourceContext.fetch(FetchDescriptor<PaperReadingSchedulerLegacySchemaV1.UserSettings>())
-        let legacyFeedbackEntries = try sourceContext.fetch(FetchDescriptor<PaperReadingSchedulerLegacySchemaV1.FeedbackEntry>())
+        let legacyPapers = try sourceContext.fetch(FetchDescriptor<PaperMasterLegacySchemaV1.Paper>())
+        let legacySettings = try sourceContext.fetch(FetchDescriptor<PaperMasterLegacySchemaV1.UserSettings>())
+        let legacyFeedbackEntries = try sourceContext.fetch(FetchDescriptor<PaperMasterLegacySchemaV1.FeedbackEntry>())
 
         let destinationContainer = try makeCurrentContainer(at: destinationStoreURL)
         let destinationContext = ModelContext(destinationContainer)
@@ -338,22 +386,22 @@ struct PersistentStoreController {
     }
 
     private func makeCurrentContainer(at storeURL: URL) throws -> ModelContainer {
-        let schema = Schema(versionedSchema: PaperReadingSchedulerSchemaV4.self)
+        let schema = Schema(versionedSchema: PaperMasterSchemaV4.self)
         let configuration = ModelConfiguration(
-            "HenryPaper",
+            "PaperMaster",
             schema: schema,
             url: storeURL,
             cloudKitDatabase: .none
         )
         return try ModelContainer(
             for: schema,
-            migrationPlan: PaperReadingSchedulerMigrationPlan.self,
+            migrationPlan: PaperMasterMigrationPlan.self,
             configurations: configuration
         )
     }
 
     private func makeLegacyContainer(at storeURL: URL) throws -> ModelContainer {
-        let schema = Schema(versionedSchema: PaperReadingSchedulerLegacySchemaV1.self)
+        let schema = Schema(versionedSchema: PaperMasterLegacySchemaV1.self)
         let configuration = ModelConfiguration(
             "LegacyHenryPaper",
             schema: schema,
@@ -452,13 +500,13 @@ private enum PersistentStoreControllerError: LocalizedError {
         case let .storeFamilyMissing(path):
             return "No SwiftData store files were found at \(path)."
         case let .sqliteOpenFailed(path):
-            return "HenryPaper could not read the previous database at \(path)."
+            return "PaperMaster could not read the previous HenryPaper database at \(path)."
         case let .sqlitePrepareFailed(message):
-            return "HenryPaper could not read the previous database schema. \(message)"
+            return "PaperMaster could not read the previous HenryPaper database schema. \(message)"
         case .invalidUUIDData:
-            return "HenryPaper could not read an identifier from the previous database."
+            return "PaperMaster could not read an identifier from the previous HenryPaper database."
         case let .unexpectedSQLiteSchema(tableName):
-            return "HenryPaper could not read the previous database table \(tableName)."
+            return "PaperMaster could not read the previous HenryPaper database table \(tableName)."
         }
     }
 }
@@ -814,7 +862,7 @@ private extension Data {
     }
 }
 
-enum PaperReadingSchedulerLegacySchemaV1: VersionedSchema {
+enum PaperMasterLegacySchemaV1: VersionedSchema {
     static var versionIdentifier: Schema.Version {
         Schema.Version(1, 0, 0)
     }
@@ -992,7 +1040,7 @@ enum PaperReadingSchedulerLegacySchemaV1: VersionedSchema {
     }
 }
 
-enum PaperReadingSchedulerSchemaV2: VersionedSchema {
+enum PaperMasterSchemaV2: VersionedSchema {
     static var versionIdentifier: Schema.Version {
         Schema.Version(2, 0, 0)
     }
@@ -1149,7 +1197,7 @@ enum PaperReadingSchedulerSchemaV2: VersionedSchema {
     }
 }
 
-enum PaperReadingSchedulerSchemaV3: VersionedSchema {
+enum PaperMasterSchemaV3: VersionedSchema {
     static var versionIdentifier: Schema.Version {
         Schema.Version(3, 0, 0)
     }
@@ -1348,7 +1396,7 @@ enum PaperReadingSchedulerSchemaV3: VersionedSchema {
     }
 }
 
-enum PaperReadingSchedulerSchemaV4: VersionedSchema {
+enum PaperMasterSchemaV4: VersionedSchema {
     static var versionIdentifier: Schema.Version {
         Schema.Version(4, 0, 0)
     }
@@ -1358,20 +1406,20 @@ enum PaperReadingSchedulerSchemaV4: VersionedSchema {
     }
 }
 
-enum PaperReadingSchedulerMigrationPlan: SchemaMigrationPlan {
+enum PaperMasterMigrationPlan: SchemaMigrationPlan {
     static var schemas: [any VersionedSchema.Type] {
-        [PaperReadingSchedulerSchemaV2.self, PaperReadingSchedulerSchemaV3.self, PaperReadingSchedulerSchemaV4.self]
+        [PaperMasterSchemaV2.self, PaperMasterSchemaV3.self, PaperMasterSchemaV4.self]
     }
 
     static var stages: [MigrationStage] {
         [
             .lightweight(
-                fromVersion: PaperReadingSchedulerSchemaV2.self,
-                toVersion: PaperReadingSchedulerSchemaV3.self
+                fromVersion: PaperMasterSchemaV2.self,
+                toVersion: PaperMasterSchemaV3.self
             ),
             .lightweight(
-                fromVersion: PaperReadingSchedulerSchemaV3.self,
-                toVersion: PaperReadingSchedulerSchemaV4.self
+                fromVersion: PaperMasterSchemaV3.self,
+                toVersion: PaperMasterSchemaV4.self
             )
         ]
     }

@@ -3,25 +3,25 @@
 import PackageDescription
 
 let package = Package(
-    name: "PaperReadingScheduler",
+    name: "PaperMaster",
     platforms: [
         .macOS(.v14)
     ],
     products: [
         .executable(
-            name: "PaperReadingScheduler",
-            targets: ["PaperReadingScheduler"]
+            name: "PaperMaster",
+            targets: ["PaperMaster"]
         )
     ],
     targets: [
         .executableTarget(
-            name: "PaperReadingScheduler",
-            path: "Sources/PaperReadingScheduler"
+            name: "PaperMaster",
+            path: "Sources/PaperMaster"
         ),
         .testTarget(
-            name: "PaperReadingSchedulerTests",
-            dependencies: ["PaperReadingScheduler"],
-            path: "Tests/PaperReadingSchedulerTests"
+            name: "PaperMasterTests",
+            dependencies: ["PaperMaster"],
+            path: "Tests/PaperMasterTests"
         )
     ]
 )

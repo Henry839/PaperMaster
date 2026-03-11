@@ -1,7 +1,7 @@
 import Foundation
 import SwiftData
 import XCTest
-@testable import PaperReadingScheduler
+@testable import PaperMaster
 
 @MainActor
 final class FeedbackEntryTests: XCTestCase {

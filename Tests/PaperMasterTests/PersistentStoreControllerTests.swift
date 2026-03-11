@@ -1,7 +1,7 @@
 import Foundation
 import SwiftData
 import XCTest
-@testable import PaperReadingScheduler
+@testable import PaperMaster
 
 @MainActor
 final class PersistentStoreControllerTests: XCTestCase {
@@ -14,8 +14,8 @@ final class PersistentStoreControllerTests: XCTestCase {
         XCTAssertEqual(
             controller.currentStoreURL.path,
             rootDirectoryURL
-                .appendingPathComponent("HenryPaper", isDirectory: true)
-                .appendingPathComponent("HenryPaper.store")
+                .appendingPathComponent("PaperMaster", isDirectory: true)
+                .appendingPathComponent("PaperMaster.store")
                 .path
         )
         XCTAssertNotEqual(controller.currentStoreURL.path, controller.legacyStoreURL.path)
@@ -74,6 +74,40 @@ final class PersistentStoreControllerTests: XCTestCase {
         XCTAssertTrue(FileManager.default.fileExists(atPath: controller.currentStoreURL.path))
     }
 
+    func testMakeLaunchSetupMigratesPreviousHenryPaperStoreIntoPaperMasterStore() throws {
+        let rootDirectoryURL = try TestSupport.makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: rootDirectoryURL) }
+
+        let controller = PersistentStoreController(
+            applicationSupportDirectoryURL: rootDirectoryURL,
+            now: { Date(timeIntervalSince1970: 1_741_520_800) }
+        )
+        try seedV3Store(at: controller.previousAppStoreURL, configurationName: "HenryPaper")
+
+        let setup = controller.makeLaunchSetup()
+        let context = ModelContext(setup.container)
+        let papers = try context.fetch(FetchDescriptor<Paper>())
+
+        XCTAssertEqual(setup.storeURL?.path, controller.currentStoreURL.path)
+        XCTAssertEqual(setup.startupNoticeMessage, "Recovered 1 paper from your previous HenryPaper library.")
+        XCTAssertNil(setup.startupErrorMessage)
+        XCTAssertEqual(papers.count, 1)
+        XCTAssertEqual(papers.first?.title, "V3 Paper")
+
+        let backupDirectories = try FileManager.default.contentsOfDirectory(
+            at: controller.backupRootDirectoryURL,
+            includingPropertiesForKeys: nil
+        )
+        XCTAssertEqual(backupDirectories.count, 1)
+        XCTAssertTrue(
+            FileManager.default.fileExists(
+                atPath: backupDirectories[0]
+                    .appendingPathComponent(controller.previousAppStoreURL.lastPathComponent)
+                    .path
+            )
+        )
+    }
+
     func testMakeLaunchSetupMigratesV2StoreToV4StorageDefaults() throws {
         let rootDirectoryURL = try TestSupport.makeTemporaryDirectory()
         defer { try? FileManager.default.removeItem(at: rootDirectoryURL) }
@@ -125,7 +159,7 @@ final class PersistentStoreControllerTests: XCTestCase {
     }
 
     private func seedLegacyStore(at storeURL: URL) throws {
-        let schema = Schema(versionedSchema: PaperReadingSchedulerLegacySchemaV1.self)
+        let schema = Schema(versionedSchema: PaperMasterLegacySchemaV1.self)
         let configuration = ModelConfiguration(
             "LegacyHenryPaper",
             schema: schema,
@@ -135,7 +169,7 @@ final class PersistentStoreControllerTests: XCTestCase {
         let container = try ModelContainer(for: schema, configurations: configuration)
         let context = ModelContext(container)
 
-        let settings = PaperReadingSchedulerLegacySchemaV1.UserSettings(
+        let settings = PaperMasterLegacySchemaV1.UserSettings(
             papersPerDay: 3,
             dailyReminderTime: TestSupport.reminderDate(hour: 10, minute: 15),
             autoCachePDFs: true,
@@ -144,7 +178,7 @@ final class PersistentStoreControllerTests: XCTestCase {
             aiTaggingBaseURLString: "https://api.openai.com/v1",
             aiTaggingModel: "gpt-4o-mini"
         )
-        let first = PaperReadingSchedulerLegacySchemaV1.Paper(
+        let first = PaperMasterLegacySchemaV1.Paper(
             title: "Legacy Paper",
             authorsText: "Ada Lovelace, Grace Hopper",
             abstractText: "First legacy abstract.",
@@ -160,11 +194,11 @@ final class PersistentStoreControllerTests: XCTestCase {
             notes: "Legacy notes",
             autoTaggingStatusMessage: "Legacy message",
             tags: [
-                PaperReadingSchedulerLegacySchemaV1.Tag(name: "agents"),
-                PaperReadingSchedulerLegacySchemaV1.Tag(name: "planning")
+                PaperMasterLegacySchemaV1.Tag(name: "agents"),
+                PaperMasterLegacySchemaV1.Tag(name: "planning")
             ]
         )
-        let second = PaperReadingSchedulerLegacySchemaV1.Paper(
+        let second = PaperMasterLegacySchemaV1.Paper(
             title: "Another Legacy Paper",
             authorsText: "Barbara Liskov",
             abstractText: "Second legacy abstract.",
@@ -175,10 +209,10 @@ final class PersistentStoreControllerTests: XCTestCase {
             dateAdded: Date(timeIntervalSince1970: 1_700_000_100),
             startedAt: Date(timeIntervalSince1970: 1_700_000_200),
             tags: [
-                PaperReadingSchedulerLegacySchemaV1.Tag(name: "systems")
+                PaperMasterLegacySchemaV1.Tag(name: "systems")
             ]
         )
-        let feedbackEntry = PaperReadingSchedulerLegacySchemaV1.FeedbackEntry(
+        let feedbackEntry = PaperMasterLegacySchemaV1.FeedbackEntry(
             createdAt: Date(timeIntervalSince1970: 1_700_000_300),
             screenRawValue: AppScreen.queue.rawValue,
             screenTitle: AppScreen.queue.title,
@@ -201,9 +235,9 @@ final class PersistentStoreControllerTests: XCTestCase {
             at: storeURL.deletingLastPathComponent(),
             withIntermediateDirectories: true
         )
-        let schema = Schema(versionedSchema: PaperReadingSchedulerSchemaV2.self)
+        let schema = Schema(versionedSchema: PaperMasterSchemaV2.self)
         let configuration = ModelConfiguration(
-            "HenryPaper",
+            "PaperMaster",
             schema: schema,
             url: storeURL,
             cloudKitDatabase: .none
@@ -211,7 +245,7 @@ final class PersistentStoreControllerTests: XCTestCase {
         let container = try ModelContainer(for: schema, configurations: configuration)
         let context = ModelContext(container)
 
-        let settings = PaperReadingSchedulerSchemaV2.UserSettings(
+        let settings = PaperMasterSchemaV2.UserSettings(
             papersPerDay: 2,
             dailyReminderTime: TestSupport.reminderDate(hour: 8, minute: 45),
             autoCachePDFs: true,
@@ -220,7 +254,7 @@ final class PersistentStoreControllerTests: XCTestCase {
             aiTaggingBaseURLString: "https://api.openai.com/v1",
             aiTaggingModel: "gpt-4o-mini"
         )
-        let paper = PaperReadingSchedulerSchemaV2.Paper(
+        let paper = PaperMasterSchemaV2.Paper(
             title: "V2 Paper",
             authorsText: "Ada Lovelace",
             abstractText: "Migrated from V2.",
@@ -238,14 +272,14 @@ final class PersistentStoreControllerTests: XCTestCase {
         try context.save()
     }
 
-    private func seedV3Store(at storeURL: URL) throws {
+    private func seedV3Store(at storeURL: URL, configurationName: String = "PaperMaster") throws {
         try FileManager.default.createDirectory(
             at: storeURL.deletingLastPathComponent(),
             withIntermediateDirectories: true
         )
-        let schema = Schema(versionedSchema: PaperReadingSchedulerSchemaV3.self)
+        let schema = Schema(versionedSchema: PaperMasterSchemaV3.self)
         let configuration = ModelConfiguration(
-            "HenryPaper",
+            configurationName,
             schema: schema,
             url: storeURL,
             cloudKitDatabase: .none
@@ -253,7 +287,7 @@ final class PersistentStoreControllerTests: XCTestCase {
         let container = try ModelContainer(for: schema, configurations: configuration)
         let context = ModelContext(container)
 
-        let settings = PaperReadingSchedulerSchemaV3.UserSettings(
+        let settings = PaperMasterSchemaV3.UserSettings(
             papersPerDay: 1,
             dailyReminderTime: TestSupport.reminderDate(hour: 7, minute: 30),
             autoCachePDFs: false,
@@ -268,7 +302,7 @@ final class PersistentStoreControllerTests: XCTestCase {
             aiTaggingBaseURLString: "https://api.openai.com/v1",
             aiTaggingModel: "gpt-4o-mini"
         )
-        let paper = PaperReadingSchedulerSchemaV3.Paper(
+        let paper = PaperMasterSchemaV3.Paper(
             title: "V3 Paper",
             authorsText: "Ada Lovelace",
             abstractText: "Migrated from V3.",

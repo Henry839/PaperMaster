@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
-APP_NAME="HenryPaper"
+APP_NAME="PaperMaster"
 BASE_PNG="$ROOT_DIR/AppBundle/${APP_NAME}-1024.png"
 ICNS_PATH="$ROOT_DIR/AppBundle/${APP_NAME}.icns"
 WORK_DIR="$ROOT_DIR/AppBundle/.icon-work"
@@ -10,12 +10,12 @@ MULTI_TIFF="$WORK_DIR/${APP_NAME}.tiff"
 export TMPDIR=/tmp
 
 mkdir -p /tmp/swift-module-cache /tmp/clang-module-cache
+rm -rf "$WORK_DIR"
+mkdir -p "$WORK_DIR"
+
 SWIFT_MODULECACHE_PATH=/tmp/swift-module-cache \
 CLANG_MODULE_CACHE_PATH=/tmp/clang-module-cache \
 swift "$ROOT_DIR/Scripts/generate-icon.swift" "$BASE_PNG" >/dev/null
-
-rm -rf "$WORK_DIR"
-mkdir -p "$WORK_DIR"
 
 for size in 16 32 48 128 256 512 1024; do
   /usr/bin/sips -z "$size" "$size" -s format tiff "$BASE_PNG" --out "$WORK_DIR/${size}.tiff" >/dev/null

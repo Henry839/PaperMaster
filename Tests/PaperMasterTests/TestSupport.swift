@@ -1,7 +1,7 @@
 import Foundation
 import SwiftData
 import UserNotifications
-@testable import PaperReadingScheduler
+@testable import PaperMaster
 
 struct StubNetworking: Networking {
     let handler: @Sendable (URL) throws -> (Data, URLResponse)
@@ -282,7 +282,7 @@ enum TestSupport {
 
     static func makeTemporaryDirectory() throws -> URL {
         let directoryURL = FileManager.default.temporaryDirectory
-            .appendingPathComponent("PaperReadingSchedulerTests-\(UUID().uuidString)", isDirectory: true)
+            .appendingPathComponent("PaperMasterTests-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: directoryURL, withIntermediateDirectories: true)
         return directoryURL
     }

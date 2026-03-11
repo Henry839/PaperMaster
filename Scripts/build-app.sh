@@ -2,10 +2,10 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
-APP_BUNDLE_NAME="Henry稍后读"
-EXECUTABLE_NAME="HenryPaper"
-ICON_NAME="HenryPaper"
-SOURCE_BINARY_NAME="PaperReadingScheduler"
+APP_BUNDLE_NAME="PaperMaster"
+EXECUTABLE_NAME="PaperMaster"
+ICON_NAME="PaperMaster"
+SOURCE_BINARY_NAME="PaperMaster"
 CONFIGURATION="${1:-release}"
 BUILD_DIR="$ROOT_DIR/.build"
 APP_DIR="$ROOT_DIR/dist/${APP_BUNDLE_NAME}.app"
