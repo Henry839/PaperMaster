@@ -1,8 +1,30 @@
-# PaperMaster
+<p align="center">
+  <img src="assets/PaperMaster-1024.png" alt="PaperMaster logo" width="180" />
+</p>
+
+<h1 align="center">PaperMaster</h1>
+
+<p align="center">
+  A native macOS paper queue for collecting papers, managing PDFs, planning daily reading, and generating research ideas.
+</p>
+
+<p align="center">
+  <img src="assets/ui-preview.svg" alt="PaperMaster UI preview showing Today, Reader, and Fusion Reactor screens" width="100%" />
+</p>
 
 PaperMaster is a native macOS paper queue app for collecting papers, storing PDFs, scheduling what to read next, fusing papers into new research ideas, and reviewing PDFs without leaving the app.
 
 The app is built with `SwiftUI`, `SwiftData`, `PDFKit`, and `UserNotifications`.
+
+## UI Preview
+
+The preview above highlights the app's main workflow:
+
+- `Today`: prioritize what to read now based on your queue and reading capacity.
+- `Reader`: review PDFs in-app and keep your reading flow inside the app.
+- `Fusion Reactor`: combine papers into new idea prompts with an optional OpenAI-compatible backend.
+
+If you add real screenshots later, put them under `assets/` and link them here to replace the illustration.
 
 ## What The App Does
 

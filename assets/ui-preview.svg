@@ -1,0 +1,93 @@
+<svg width="1600" height="980" viewBox="0 0 1600 980" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <rect width="1600" height="980" rx="48" fill="#08111A"/>
+  <rect x="24" y="24" width="1552" height="932" rx="36" fill="url(#bg)" stroke="#CCA866" stroke-opacity="0.18" stroke-width="2"/>
+
+  <text x="86" y="118" fill="#F7F1E5" font-family="SF Pro Display, Arial, sans-serif" font-size="52" font-weight="700">PaperMaster</text>
+  <text x="86" y="162" fill="#C9B48C" font-family="SF Pro Text, Arial, sans-serif" font-size="24">A local-first macOS reading queue for research papers</text>
+
+  <g transform="translate(72 220)">
+    <rect width="430" height="620" rx="30" fill="#122131" stroke="#CCA866" stroke-opacity="0.18" stroke-width="2"/>
+    <circle cx="34" cy="34" r="8" fill="#B84C43"/>
+    <circle cx="60" cy="34" r="8" fill="#CCA866"/>
+    <circle cx="86" cy="34" r="8" fill="#456853"/>
+    <text x="34" y="84" fill="#F7F1E5" font-family="SF Pro Display, Arial, sans-serif" font-size="32" font-weight="600">Today</text>
+
+    <rect x="28" y="110" width="374" height="96" rx="22" fill="#1B2F42"/>
+    <text x="54" y="152" fill="#F7F1E5" font-family="SF Pro Text, Arial, sans-serif" font-size="23" font-weight="600">Reading capacity</text>
+    <text x="54" y="186" fill="#C9B48C" font-family="SF Pro Text, Arial, sans-serif" font-size="20">3 papers scheduled, 1 in progress</text>
+
+    <rect x="28" y="234" width="374" height="134" rx="24" fill="#F7F1E5"/>
+    <rect x="50" y="262" width="96" height="12" rx="6" fill="#CCA866" fill-opacity="0.70"/>
+    <rect x="50" y="292" width="282" height="18" rx="9" fill="#223546" fill-opacity="0.92"/>
+    <rect x="50" y="322" width="244" height="14" rx="7" fill="#66737D" fill-opacity="0.72"/>
+    <rect x="50" y="348" width="150" height="12" rx="6" fill="#456853"/>
+    <circle cx="364" cy="301" r="18" fill="#A13333"/>
+
+    <rect x="28" y="392" width="374" height="134" rx="24" fill="#EFE6D7"/>
+    <rect x="50" y="420" width="88" height="12" rx="6" fill="#CCA866" fill-opacity="0.72"/>
+    <rect x="50" y="450" width="298" height="18" rx="9" fill="#223546" fill-opacity="0.92"/>
+    <rect x="50" y="480" width="210" height="14" rx="7" fill="#66737D" fill-opacity="0.72"/>
+    <rect x="50" y="506" width="122" height="12" rx="6" fill="#A13333" fill-opacity="0.82"/>
+    <circle cx="364" cy="459" r="18" fill="#456853"/>
+
+    <rect x="28" y="550" width="374" height="42" rx="21" fill="#0C1823" stroke="#CCA866" stroke-opacity="0.20" stroke-width="2"/>
+    <text x="52" y="578" fill="#C9B48C" font-family="SF Pro Text, Arial, sans-serif" font-size="18">Inbox  •  Queue  •  Library  •  Reactor</text>
+  </g>
+
+  <g transform="translate(548 220)">
+    <rect width="480" height="620" rx="30" fill="#122131" stroke="#CCA866" stroke-opacity="0.18" stroke-width="2"/>
+    <circle cx="34" cy="34" r="8" fill="#B84C43"/>
+    <circle cx="60" cy="34" r="8" fill="#CCA866"/>
+    <circle cx="86" cy="34" r="8" fill="#456853"/>
+    <text x="34" y="84" fill="#F7F1E5" font-family="SF Pro Display, Arial, sans-serif" font-size="32" font-weight="600">Reader</text>
+
+    <rect x="28" y="116" width="424" height="470" rx="26" fill="#F7F1E5"/>
+    <rect x="68" y="166" width="6" height="300" rx="3" fill="#CCA866"/>
+    <rect x="106" y="158" width="252" height="14" rx="7" fill="#2B3947" fill-opacity="0.95"/>
+    <rect x="106" y="192" width="306" height="10" rx="5" fill="#6F7B83" fill-opacity="0.68"/>
+    <rect x="106" y="226" width="280" height="10" rx="5" fill="#6F7B83" fill-opacity="0.68"/>
+    <rect x="106" y="260" width="298" height="10" rx="5" fill="#6F7B83" fill-opacity="0.68"/>
+    <rect x="106" y="294" width="236" height="10" rx="5" fill="#6F7B83" fill-opacity="0.68"/>
+    <rect x="106" y="350" width="206" height="14" rx="7" fill="#A13333" fill-opacity="0.74"/>
+    <rect x="106" y="384" width="282" height="10" rx="5" fill="#6F7B83" fill-opacity="0.68"/>
+    <rect x="106" y="418" width="260" height="10" rx="5" fill="#6F7B83" fill-opacity="0.68"/>
+    <rect x="106" y="452" width="224" height="10" rx="5" fill="#6F7B83" fill-opacity="0.68"/>
+
+    <rect x="286" y="514" width="132" height="36" rx="18" fill="#456853"/>
+    <text x="318" y="538" fill="#F7F1E5" font-family="SF Pro Text, Arial, sans-serif" font-size="18" font-weight="600">Ask AI</text>
+
+    <rect x="28" y="32" width="148" height="32" rx="16" fill="#1B2F42"/>
+    <text x="48" y="54" fill="#C9B48C" font-family="SF Pro Text, Arial, sans-serif" font-size="17">PDFKit view</text>
+  </g>
+
+  <g transform="translate(1074 220)">
+    <rect width="454" height="620" rx="30" fill="#122131" stroke="#CCA866" stroke-opacity="0.18" stroke-width="2"/>
+    <circle cx="34" cy="34" r="8" fill="#B84C43"/>
+    <circle cx="60" cy="34" r="8" fill="#CCA866"/>
+    <circle cx="86" cy="34" r="8" fill="#456853"/>
+    <text x="34" y="84" fill="#F7F1E5" font-family="SF Pro Display, Arial, sans-serif" font-size="32" font-weight="600">Fusion Reactor</text>
+
+    <circle cx="226" cy="304" r="118" fill="#1D2C3B"/>
+    <circle cx="226" cy="304" r="92" fill="#0D1823" stroke="#CCA866" stroke-width="6"/>
+    <path d="M226 244L246 292H298L256 322L272 370L226 340L180 370L196 322L154 292H206L226 244Z" fill="#CCA866"/>
+
+    <rect x="42" y="150" width="126" height="74" rx="20" fill="#F7F1E5"/>
+    <rect x="286" y="150" width="126" height="74" rx="20" fill="#F7F1E5"/>
+    <rect x="42" y="404" width="126" height="74" rx="20" fill="#F7F1E5"/>
+    <rect x="286" y="404" width="126" height="74" rx="20" fill="#F7F1E5"/>
+    <rect x="88" y="514" width="278" height="44" rx="22" fill="#A13333"/>
+    <text x="154" y="542" fill="#F7F1E5" font-family="SF Pro Text, Arial, sans-serif" font-size="20" font-weight="600">Generate 3 ideas</text>
+
+    <rect x="42" y="150" width="64" height="10" rx="5" fill="#CCA866" fill-opacity="0.75"/>
+    <rect x="42" y="404" width="72" height="10" rx="5" fill="#CCA866" fill-opacity="0.75"/>
+    <rect x="286" y="150" width="58" height="10" rx="5" fill="#CCA866" fill-opacity="0.75"/>
+    <rect x="286" y="404" width="68" height="10" rx="5" fill="#CCA866" fill-opacity="0.75"/>
+  </g>
+
+  <defs>
+    <linearGradient id="bg" x1="800" y1="24" x2="800" y2="956" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#142434"/>
+      <stop offset="1" stop-color="#09131D"/>
+    </linearGradient>
+  </defs>
+</svg>
