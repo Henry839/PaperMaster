@@ -24,7 +24,11 @@ The preview above highlights the app's main workflow:
 - `Reader`: review PDFs in-app and keep your reading flow inside the app.
 - `Fusion Reactor`: combine papers into new idea prompts with an optional OpenAI-compatible backend.
 
-If you add real screenshots later, put them under `assets/` and link them here to replace the illustration.
+Below is the actual `Fusion Reactor` screen running in the app, including loaded papers, the furnace interaction, and generated idea cards:
+
+<p align="center">
+  <img src="assets/fusion-reactor-live-ui.png" alt="PaperMaster Fusion Reactor running UI with loaded materials, active furnace, and generated fusion results" width="100%" />
+</p>
 
 ## What The App Does
 
