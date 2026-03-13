@@ -30,6 +30,14 @@ The `Library` and paper detail flow keeps fuzzy search, local paper browsing, PD
   <img src="assets/library-paper-detail-ui.png" alt="PaperMaster Library and paper detail UI showing fuzzy search, metadata, BibTeX, and Create Paper Card actions" width="100%" />
 </p>
 
+The `Queue` view also highlights one of PaperMaster's strongest features: exceptionally high-quality `Paper Cards`. Instead of a thin AI summary, the card is designed to feel like a polished research artifact that is worth saving, reviewing, copying, and reusing later. It turns a paper into a clean, structured, high-signal brief with strong readability, obvious sectioning, and enough substance to be genuinely useful during follow-up work.
+
+This makes the `Paper Card` workflow especially valuable for serious reading: scheduled papers stay visible on the left, while the right side becomes a refined knowledge panel that helps you recall the core idea, contributions, methods, comparisons, and limitations quickly without digging back through the PDF:
+
+<p align="center">
+  <img src="assets/queue-paper-card-sample.png" alt="PaperMaster Queue view with scheduled papers and an open Paper Card summary panel" width="100%" />
+</p>
+
 Below is the actual `Fusion Reactor` screen running in the app, including loaded papers, the furnace interaction, and generated idea cards:
 
 <p align="center">
