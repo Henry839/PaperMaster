@@ -37,6 +37,37 @@ final class MetadataResolverTests: XCTestCase {
         XCTAssertEqual(result.sourceURL?.absoluteString, "https://example.com/papers/awesome-paper.pdf")
     }
 
+    func testLocalPDFUsesEmbeddedMetadataWithoutNetwork() async throws {
+        let directoryURL = try TestSupport.makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directoryURL) }
+
+        let fileURL = directoryURL.appendingPathComponent("local-paper.pdf")
+        try TestSupport.makePDF(
+            at: fileURL,
+            title: "Local Paper Title",
+            author: "Jane Doe, John Roe",
+            body: """
+            Local Paper Title
+            Jane Doe, John Roe
+
+            Abstract
+            This paper describes a fully local import path for PDFs.
+            """
+        )
+
+        let resolver = MetadataResolver(networking: StubNetworking { _ in
+            XCTFail("Local PDF imports should not hit the network without an arXiv identifier")
+            throw URLError(.badURL)
+        })
+
+        let result = try await resolver.resolve(url: fileURL)
+
+        XCTAssertEqual(result.title, "Local Paper Title")
+        XCTAssertEqual(result.authors, ["Jane Doe", "John Roe"])
+        XCTAssertEqual(result.pdfURL?.path, fileURL.path)
+        XCTAssertEqual(result.sourceURL?.path, fileURL.path)
+    }
+
     private static let arxivResponse = """
     <?xml version="1.0" encoding="UTF-8"?>
     <feed xmlns="http://www.w3.org/2005/Atom">

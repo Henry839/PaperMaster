@@ -1,4 +1,6 @@
+import AppKit
 import Foundation
+import PDFKit
 import SwiftData
 import UserNotifications
 @testable import PaperMaster
@@ -68,6 +70,29 @@ final class SpyPaperFusionGenerator: PaperFusionGenerating, @unchecked Sendable 
     ) async throws -> [PaperFusionIdea] {
         self.inputs.append(inputs)
         return try handler(inputs, configuration)
+    }
+}
+
+final class SpyPaperCardGenerator: PaperCardGenerating, @unchecked Sendable {
+    private(set) var inputs: [PaperCardInput] = []
+    private let handler: @Sendable (PaperCardInput, AIProviderConfiguration) throws -> PaperCardOutput
+
+    init(
+        handler: @escaping @Sendable (PaperCardInput, AIProviderConfiguration) throws -> PaperCardOutput
+    ) {
+        self.handler = handler
+    }
+
+    var callCount: Int {
+        inputs.count
+    }
+
+    func generatePaperCard(
+        for input: PaperCardInput,
+        configuration: AIProviderConfiguration
+    ) async throws -> PaperCardOutput {
+        inputs.append(input)
+        return try handler(input, configuration)
     }
 }
 
@@ -261,6 +286,7 @@ enum TestSupport {
     static func makeInMemoryContainer() throws -> ModelContainer {
         try ModelContainer(
             for: Paper.self,
+            PaperCard.self,
             PaperAnnotation.self,
             Tag.self,
             UserSettings.self,
@@ -285,5 +311,47 @@ enum TestSupport {
             .appendingPathComponent("PaperMasterTests-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: directoryURL, withIntermediateDirectories: true)
         return directoryURL
+    }
+
+    static func makePDF(
+        at fileURL: URL,
+        title: String,
+        author: String? = nil,
+        body: String
+    ) throws {
+        let pageBounds = CGRect(x: 0, y: 0, width: 612, height: 792)
+        let image = NSImage(size: pageBounds.size, flipped: false) { _ in
+            NSColor.white.setFill()
+            pageBounds.fill()
+
+            let textRect = CGRect(x: 48, y: 48, width: 516, height: 696)
+            let paragraphStyle = NSMutableParagraphStyle()
+            paragraphStyle.lineBreakMode = .byWordWrapping
+            let attributedText = NSAttributedString(
+                string: body,
+                attributes: [
+                    .font: NSFont.systemFont(ofSize: 15),
+                    .foregroundColor: NSColor.black,
+                    .paragraphStyle: paragraphStyle
+                ]
+            )
+            attributedText.draw(in: textRect)
+            return true
+        }
+
+        guard let pdfPage = PDFPage(image: image) else {
+            throw TestError(message: "Could not create PDF page.")
+        }
+
+        let document = PDFDocument()
+        document.insert(pdfPage, at: 0)
+        document.documentAttributes = [
+            PDFDocumentAttribute.titleAttribute: title,
+            PDFDocumentAttribute.authorAttribute: author ?? ""
+        ]
+
+        guard document.write(to: fileURL) else {
+            throw TestError(message: "Could not write test PDF.")
+        }
     }
 }

@@ -29,6 +29,7 @@ struct SystemTextClipboardWriter: TextClipboardWriting {
 final class AppServices {
     let importService: PaperImportService
     let fusionGenerator: PaperFusionGenerating?
+    let paperCardGenerator: PaperCardGenerating?
     let readerAnswerer: ReaderAnswerGenerating?
     let schedulerService: SchedulerService
     let pdfCacheService: PDFCacheService
@@ -38,9 +39,14 @@ final class AppServices {
     let paperStorageCredentialStore: PaperStorageCredentialStoring
     let readerDocumentContextLoader: ReaderDocumentContextLoading
     let textClipboard: TextClipboardWriting
+    @ObservationIgnored private let fileManager: FileManager
+    @ObservationIgnored private let paperCardHTMLDirectoryURL: URL
     @ObservationIgnored private let startupNoticeMessage: String?
     @ObservationIgnored private let startupErrorMessage: String?
     @ObservationIgnored private var noticeDismissTask: Task<Void, Never>?
+    @ObservationIgnored private var storageFolderMonitorTask: Task<Void, Never>?
+    @ObservationIgnored private var monitoredStorageFolderPath: String?
+    @ObservationIgnored private var activeLocalImportPaths: Set<String> = []
     private(set) var didBootstrap = false
     var presentedError: PresentedError?
     var presentedNotice: PresentedNotice?
@@ -48,6 +54,7 @@ final class AppServices {
     init(
         importService: PaperImportService,
         fusionGenerator: PaperFusionGenerating? = nil,
+        paperCardGenerator: PaperCardGenerating? = nil,
         readerAnswerer: ReaderAnswerGenerating? = nil,
         schedulerService: SchedulerService = SchedulerService(),
         pdfCacheService: PDFCacheService = PDFCacheService(),
@@ -57,11 +64,14 @@ final class AppServices {
         paperStorageCredentialStore: PaperStorageCredentialStoring = InMemoryPaperStorageCredentialStore(),
         readerDocumentContextLoader: ReaderDocumentContextLoading = PDFKitReaderDocumentContextLoader(),
         textClipboard: TextClipboardWriting = SystemTextClipboardWriter(),
+        fileManager: FileManager = .default,
+        paperCardHTMLDirectoryURL: URL? = nil,
         startupNoticeMessage: String? = nil,
         startupErrorMessage: String? = nil
     ) {
         self.importService = importService
         self.fusionGenerator = fusionGenerator
+        self.paperCardGenerator = paperCardGenerator
         self.readerAnswerer = readerAnswerer
         self.schedulerService = schedulerService
         self.pdfCacheService = pdfCacheService
@@ -71,6 +81,14 @@ final class AppServices {
         self.paperStorageCredentialStore = paperStorageCredentialStore
         self.readerDocumentContextLoader = readerDocumentContextLoader
         self.textClipboard = textClipboard
+        self.fileManager = fileManager
+        let defaultPaperCardDirectoryURL = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask).first?
+            .appendingPathComponent("PaperMaster", isDirectory: true)
+            .appendingPathComponent("PaperCards", isDirectory: true)
+            ?? URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
+                .appendingPathComponent("PaperMaster", isDirectory: true)
+                .appendingPathComponent("PaperCards", isDirectory: true)
+        self.paperCardHTMLDirectoryURL = paperCardHTMLDirectoryURL ?? defaultPaperCardDirectoryURL
         self.startupNoticeMessage = startupNoticeMessage
         self.startupErrorMessage = startupErrorMessage
     }
@@ -90,6 +108,7 @@ final class AppServices {
                 credentialStore: taggingCredentialStore
             ),
             fusionGenerator: OpenAICompatiblePaperFusionGenerator(),
+            paperCardGenerator: OpenAICompatiblePaperCardGenerator(),
             readerAnswerer: OpenAICompatibleReaderAnswerer(),
             paperStorageService: PaperStorageService(
                 credentialStore: paperStorageCredentialStore
@@ -123,6 +142,7 @@ final class AppServices {
             showNotice(startupNoticeMessage)
         }
         didBootstrap = true
+        refreshStorageFolderMonitoring(context: context)
     }
 
     @discardableResult
@@ -158,6 +178,7 @@ final class AppServices {
             }
             let storageNotice = await storeManagedPDFIfPossible(for: paper, settings: settings)
             try persistAndSync(allPapers: currentPapers + [paper], settings: settings, context: context)
+            refreshStorageFolderMonitoring(context: context)
             if let notice = combinedNoticeMessages(result.notice, storageNotice) {
                 showNotice(notice)
             }
@@ -312,6 +333,48 @@ final class AppServices {
         }
     }
 
+    func refreshStorageFolderMonitoring(context: ModelContext) {
+        let settings = (try? context.fetch(FetchDescriptor<UserSettings>()).first) ?? nil
+        let monitoredPath = settings.flatMap(monitoredStorageFolderURL(for:))?.path
+
+        guard monitoredStorageFolderPath != monitoredPath || storageFolderMonitorTask == nil else {
+            return
+        }
+
+        storageFolderMonitorTask?.cancel()
+        monitoredStorageFolderPath = monitoredPath
+
+        guard monitoredPath != nil else {
+            storageFolderMonitorTask = nil
+            return
+        }
+
+        storageFolderMonitorTask = Task { @MainActor [weak self] in
+            await self?.runStorageFolderMonitoring(context: context)
+        }
+    }
+
+    func importDroppedPDFs(
+        at fileURLs: [URL],
+        settings: UserSettings,
+        currentPapers: [Paper],
+        in context: ModelContext
+    ) async {
+        let outcomes = await importLocalPDFs(
+            at: fileURLs,
+            settings: settings,
+            currentPapers: currentPapers,
+            in: context,
+            origin: .drop
+        )
+
+        let importedCount = outcomes.filter(\.didCreatePaper).count
+        guard importedCount > 0 else { return }
+
+        let noun = importedCount == 1 ? "paper" : "papers"
+        showNotice("Imported \(importedCount) \(noun) from dropped PDFs.")
+    }
+
     func persistNotes(context: ModelContext) {
         do {
             try context.save()
@@ -425,6 +488,116 @@ final class AppServices {
             present(error)
             return nil
         }
+    }
+
+    func generatePaperCard(
+        for paper: Paper,
+        settings: UserSettings,
+        allPapers: [Paper],
+        context: ModelContext
+    ) async {
+        guard let paperCardGenerator else {
+            present(PaperCardError.generatorUnavailable)
+            return
+        }
+
+        let storedAPIKey: String?
+        do {
+            storedAPIKey = try taggingCredentialStore.loadAPIKey()
+        } catch {
+            present(error)
+            return
+        }
+
+        guard let configuration = settings.aiProviderConfiguration(apiKey: storedAPIKey) else {
+            let readiness = settings.aiProviderReadiness(apiKey: storedAPIKey)
+            present(PaperCardError.providerNotConfigured(readiness.settingsMessage))
+            return
+        }
+
+        let venueText = [paper.venueName, paper.venueKey]
+            .compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { $0.isEmpty == false }
+            .joined(separator: " · ")
+        let citationText = [
+            paper.doi.map { "DOI: \($0)" },
+            paper.bibtex?.isEmpty == false ? "BibTeX available" : nil
+        ]
+        .compactMap { $0 }
+        .joined(separator: " · ")
+
+        let input = PaperCardInput(
+            paperTitle: paper.title,
+            authorsText: paper.authorsDisplayText,
+            abstractText: truncated(paper.abstractText, limit: 3_200),
+            venueText: venueText.isEmpty ? "Unknown venue" : venueText,
+            citationText: citationText.isEmpty ? "Citation info unavailable" : citationText,
+            tagNames: Array(paper.tagNames.prefix(10)),
+            notesText: truncated(paper.notes, limit: 800)
+        )
+
+        do {
+            let output = try await paperCardGenerator.generatePaperCard(for: input, configuration: configuration)
+            let htmlContent = PaperCardHTMLRenderer().render(card: output, paper: paper)
+            let exportURL = try writePaperCardHTML(htmlContent, for: paper)
+
+            if let existingCard = paper.paperCard {
+                existingCard.update(
+                    headline: output.headline,
+                    venueLine: output.venueLine,
+                    citationLine: output.citationLine,
+                    keywords: output.keywords,
+                    sections: output.sections,
+                    htmlContent: htmlContent
+                )
+                existingCard.htmlExportURL = exportURL
+            } else {
+                let card = PaperCard(
+                    paper: paper,
+                    headline: output.headline,
+                    venueLine: output.venueLine,
+                    citationLine: output.citationLine,
+                    keywords: output.keywords,
+                    sections: output.sections,
+                    htmlContent: htmlContent,
+                    htmlExportPath: exportURL.path
+                )
+                context.insert(card)
+                paper.paperCard = card
+            }
+
+            try persistAndSync(allPapers: allPapers, settings: settings, context: context)
+            showNotice("Paper Card generated and saved locally.")
+        } catch {
+            present(error)
+        }
+    }
+
+    func copyPaperCardText(_ card: PaperCard) {
+        copyText(card.plainTextExport, notice: "Copied Paper Card.")
+    }
+
+    func copyPaperCardHTML(_ card: PaperCard) {
+        copyText(card.htmlContent, notice: "Copied Paper Card HTML.")
+    }
+
+    func openPaperCardHTML(_ card: PaperCard, paper: Paper) {
+        let targetURL: URL
+        if let existingURL = card.htmlExportURL,
+           fileManager.fileExists(atPath: existingURL.path) {
+            targetURL = existingURL
+        } else {
+            do {
+                let exportURL = try writePaperCardHTML(card.htmlContent, for: paper)
+                card.htmlExportURL = exportURL
+                targetURL = exportURL
+            } catch {
+                present(error)
+                return
+            }
+        }
+
+        NSWorkspace.shared.open(targetURL)
     }
 
     func fusePapers(_ papers: [Paper], settings: UserSettings) async -> PaperFusionResult? {
@@ -679,6 +852,15 @@ final class AppServices {
         presentedError = PresentedError(message: error.localizedDescription)
     }
 
+    private func writePaperCardHTML(_ htmlContent: String, for paper: Paper) throws -> URL {
+        try fileManager.createDirectory(at: paperCardHTMLDirectoryURL, withIntermediateDirectories: true)
+        let sanitizedTitle = paperStorageService.managedFilename(paperID: paper.id, title: paper.title)
+            .replacingOccurrences(of: ".pdf", with: ".html")
+        let exportURL = paperCardHTMLDirectoryURL.appendingPathComponent(sanitizedTitle)
+        try htmlContent.write(to: exportURL, atomically: true, encoding: .utf8)
+        return exportURL
+    }
+
     private func combinedNoticeMessages(_ first: String?, _ second: String?) -> String? {
         let messages = [first, second]
             .compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines) }
@@ -717,10 +899,160 @@ final class AppServices {
         }
     }
 
+    private func storeManagedLocalPDFIfPossible(
+        for paper: Paper,
+        sourceFileURL: URL,
+        settings: UserSettings
+    ) async -> String? {
+        do {
+            let location = try await paperStorageService.storeManagedLocalPDF(
+                from: sourceFileURL,
+                for: paper,
+                settings: settings
+            )
+            switch location {
+            case let .local(url):
+                paper.managedPDFLocalURL = url
+                paper.managedPDFRemoteURL = nil
+                paper.sourceURL = url
+                paper.pdfURL = url
+            case let .remote(url):
+                paper.managedPDFLocalURL = nil
+                paper.managedPDFRemoteURL = url
+            }
+            return nil
+        } catch {
+            paper.managedPDFLocalURL = nil
+            paper.managedPDFRemoteURL = nil
+            return "Managed PDF storage failed. Imported the paper without a stored PDF copy. \(error.localizedDescription)"
+        }
+    }
+
+    private func runStorageFolderMonitoring(context: ModelContext) async {
+        while Task.isCancelled == false {
+            guard let settings = (try? context.fetch(FetchDescriptor<UserSettings>()).first),
+                  let directoryURL = monitoredStorageFolderURL(for: settings) else {
+                monitoredStorageFolderPath = nil
+                return
+            }
+
+            let papers = (try? context.fetch(FetchDescriptor<Paper>())) ?? []
+            let outcomes = await importLocalPDFs(
+                at: discoverImportablePDFs(in: directoryURL, currentPapers: papers),
+                settings: settings,
+                currentPapers: papers,
+                in: context,
+                origin: .storageFolderScan
+            )
+
+            let importedCount = outcomes.filter(\.didCreatePaper).count
+            if importedCount > 0 {
+                let noun = importedCount == 1 ? "paper" : "papers"
+                showNotice("Imported \(importedCount) \(noun) from the storage folder.")
+            }
+
+            try? await Task.sleep(nanoseconds: 2_000_000_000)
+        }
+    }
+
+    private func importLocalPDFs(
+        at fileURLs: [URL],
+        settings: UserSettings,
+        currentPapers: [Paper],
+        in context: ModelContext,
+        origin: LocalPDFImportOrigin
+    ) async -> [PaperImportResult] {
+        var outcomes: [PaperImportResult] = []
+
+        for fileURL in Array(Set(fileURLs.map(\.standardizedFileURL))).sorted(by: { $0.path < $1.path }) {
+            let path = fileURL.path
+            guard activeLocalImportPaths.contains(path) == false else { continue }
+            activeLocalImportPaths.insert(path)
+            defer { activeLocalImportPaths.remove(path) }
+
+            do {
+                let result = try await importService.createPaper(
+                    from: PaperCaptureRequest(sourceFileURL: fileURL),
+                    settings: settings,
+                    in: context
+                )
+
+                if result.didCreatePaper {
+                    let paper = result.paper
+                    paper.manualDueDateOverride = nil
+                    if paper.status.isActiveQueue {
+                        paper.queuePosition = nextQueuePosition(in: currentPapers + outcomes.map(\.paper) + [paper])
+                    }
+
+                    let _ = await storeManagedLocalPDFIfPossible(for: paper, sourceFileURL: fileURL, settings: settings)
+                    let updatedPapers = ((try? context.fetch(FetchDescriptor<Paper>())) ?? currentPapers) + []
+                    try persistAndSync(allPapers: updatedPapers, settings: settings, context: context)
+                }
+
+                outcomes.append(result)
+            } catch {
+                if origin == .drop {
+                    present(error)
+                }
+            }
+        }
+
+        refreshStorageFolderMonitoring(context: context)
+        return outcomes
+    }
+
+    private func discoverImportablePDFs(in directoryURL: URL, currentPapers: [Paper]) -> [URL] {
+        guard FileManager.default.fileExists(atPath: directoryURL.path) else {
+            return []
+        }
+
+        let trackedPaths = Set(
+            currentPapers.flatMap { paper in
+                [
+                    paper.sourceURL?.isFileURL == true ? paper.sourceURL?.standardizedFileURL.path : nil,
+                    paper.pdfURL?.isFileURL == true ? paper.pdfURL?.standardizedFileURL.path : nil,
+                    paper.managedPDFLocalURL?.standardizedFileURL.path
+                ].compactMap { $0 }
+            }
+        )
+
+        let enumerator = FileManager.default.enumerator(
+            at: directoryURL,
+            includingPropertiesForKeys: [.isRegularFileKey, .isHiddenKey],
+            options: [.skipsHiddenFiles, .skipsPackageDescendants]
+        )
+
+        var discovered: [URL] = []
+        while let nextURL = enumerator?.nextObject() as? URL {
+            guard nextURL.pathExtension.lowercased() == "pdf" else { continue }
+            guard trackedPaths.contains(nextURL.standardizedFileURL.path) == false else { continue }
+            discovered.append(nextURL)
+        }
+        return discovered
+    }
+
+    private func monitoredStorageFolderURL(for settings: UserSettings) -> URL? {
+        switch settings.paperStorageMode {
+        case .defaultLocal:
+            return defaultPaperStorageDirectoryURL
+        case .customLocal:
+            let trimmedPath = settings.customPaperStoragePath.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard trimmedPath.isEmpty == false else { return nil }
+            return URL(fileURLWithPath: trimmedPath, isDirectory: true)
+        case .remoteSSH:
+            return nil
+        }
+    }
+
     private func queueSort(lhs: Paper, rhs: Paper) -> Bool {
         if lhs.queuePosition != rhs.queuePosition {
             return lhs.queuePosition < rhs.queuePosition
         }
         return lhs.dateAdded < rhs.dateAdded
     }
+}
+
+private enum LocalPDFImportOrigin {
+    case drop
+    case storageFolderScan
 }

@@ -3,6 +3,7 @@ import SwiftData
 
 struct PaperCaptureRequest: Sendable {
     var sourceText: String
+    var sourceFileURL: URL?
     var manualTitle: String
     var manualAuthors: String
     var manualAbstract: String
@@ -11,6 +12,7 @@ struct PaperCaptureRequest: Sendable {
 
     init(
         sourceText: String = "",
+        sourceFileURL: URL? = nil,
         manualTitle: String = "",
         manualAuthors: String = "",
         manualAbstract: String = "",
@@ -18,6 +20,7 @@ struct PaperCaptureRequest: Sendable {
         preferredBehavior: ImportBehavior? = nil
     ) {
         self.sourceText = sourceText
+        self.sourceFileURL = sourceFileURL
         self.manualTitle = manualTitle
         self.manualAuthors = manualAuthors
         self.manualAbstract = manualAbstract
@@ -47,12 +50,15 @@ struct PaperImportResult {
 
 enum PaperImportError: LocalizedError {
     case invalidSourceURL
+    case invalidLocalPDF
     case missingTitle
 
     var errorDescription: String? {
         switch self {
         case .invalidSourceURL:
             "Enter a valid paper URL or direct PDF link."
+        case .invalidLocalPDF:
+            "Choose a local PDF file to import."
         case .missingTitle:
             "A title is required when metadata could not be inferred."
         }
@@ -86,7 +92,12 @@ struct PaperImportService {
     ) async throws -> PaperImportResult {
         var draft = PaperDraft()
 
-        if let sourceURL = request.sourceURL {
+        if let sourceFileURL = request.sourceFileURL {
+            guard sourceFileURL.isFileURL, sourceFileURL.pathExtension.lowercased() == "pdf" else {
+                throw PaperImportError.invalidLocalPDF
+            }
+            draft.apply(resolved: try await metadataResolver.resolve(url: sourceFileURL))
+        } else if let sourceURL = request.sourceURL {
             guard sourceURL.scheme?.hasPrefix("http") == true else {
                 throw PaperImportError.invalidSourceURL
             }
@@ -94,7 +105,7 @@ struct PaperImportService {
         }
 
         draft.applyManualOverrides(from: request)
-        draft.applySourceFallback(from: request.sourceURL)
+        draft.applySourceFallback(from: request.sourceFileURL ?? request.sourceURL)
 
         guard !draft.title.isEmpty else {
             throw PaperImportError.missingTitle
@@ -208,12 +219,20 @@ struct PaperImportService {
             keys.formUnion(requestSourceURL.canonicalPaperIdentityKeys)
         }
 
+        if let requestSourceFileURL = request.sourceFileURL {
+            keys.formUnion(requestSourceFileURL.canonicalPaperIdentityKeys)
+        }
+
         if let sourceURL = draft.sourceURL {
             keys.formUnion(sourceURL.canonicalPaperIdentityKeys)
         }
 
         if let pdfURL = draft.pdfURL {
             keys.formUnion(pdfURL.canonicalPaperIdentityKeys)
+        }
+
+        if let doi = draft.doi?.normalizedPaperIdentityDOI {
+            keys.insert("doi:\(doi)")
         }
 
         return keys
@@ -368,11 +387,15 @@ private struct PaperDraft {
         }
 
         if sourceURL == nil {
-            sourceURL = request.sourceURL
+            sourceURL = request.sourceFileURL ?? request.sourceURL
         }
 
-        if pdfURL == nil, request.sourceURL?.pathExtension.lowercased() == "pdf" {
-            pdfURL = request.sourceURL
+        if pdfURL == nil {
+            if let sourceFileURL = request.sourceFileURL, sourceFileURL.pathExtension.lowercased() == "pdf" {
+                pdfURL = sourceFileURL
+            } else if request.sourceURL?.pathExtension.lowercased() == "pdf" {
+                pdfURL = request.sourceURL
+            }
         }
     }
 
@@ -394,6 +417,16 @@ private struct PaperDraft {
         if pdfURL == nil, sourceURL.pathExtension.lowercased() == "pdf" {
             pdfURL = sourceURL
         }
+    }
+}
+
+private extension String {
+    var normalizedPaperIdentityDOI: String {
+        trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+            .replacingOccurrences(of: "https://doi.org/", with: "")
+            .replacingOccurrences(of: "http://doi.org/", with: "")
+            .replacingOccurrences(of: "doi:", with: "")
     }
 }
 

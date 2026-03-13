@@ -55,7 +55,7 @@ struct PersistentStoreController {
             return try makePersistentLaunchSetup()
         } catch {
             let container = try! ModelContainer(
-                for: Schema(versionedSchema: PaperMasterSchemaV4.self),
+                for: Schema(versionedSchema: PaperMasterSchemaV5.self),
                 migrationPlan: PaperMasterMigrationPlan.self,
                 configurations: ModelConfiguration(isStoredInMemoryOnly: true)
             )
@@ -295,6 +295,7 @@ struct PersistentStoreController {
         let destinationContainer = try makeCurrentContainer(at: destinationStoreURL)
         let destinationContext = ModelContext(destinationContainer)
         let annotationsByPaperRowID = Dictionary(grouping: snapshot.annotations, by: \.paperRowID)
+        var destinationPapersByRowID: [Int64: Paper] = [:]
 
         for settingsEntry in snapshot.settings {
             destinationContext.insert(
@@ -344,6 +345,7 @@ struct PersistentStoreController {
                 tags: Tag.buildList(from: paperEntry.tagNames)
             )
             destinationContext.insert(paper)
+            destinationPapersByRowID[paperEntry.rowID] = paper
 
             for annotationEntry in annotationsByPaperRowID[paperEntry.rowID] ?? [] {
                 destinationContext.insert(
@@ -360,6 +362,26 @@ struct PersistentStoreController {
                     )
                 )
             }
+        }
+
+        for cardEntry in snapshot.paperCards {
+            guard let paper = destinationPapersByRowID[cardEntry.paperRowID] else { continue }
+            let card = PaperCard(
+                id: cardEntry.id,
+                paper: paper,
+                createdAt: cardEntry.createdAt,
+                updatedAt: cardEntry.updatedAt,
+                formatVersion: cardEntry.formatVersion,
+                headline: cardEntry.headline,
+                venueLine: cardEntry.venueLine,
+                citationLine: cardEntry.citationLine,
+                keywords: (try? JSONDecoder().decode([String].self, from: Data(cardEntry.keywordsPayload.utf8))) ?? [],
+                sections: (try? JSONDecoder().decode([PaperCardSection].self, from: Data(cardEntry.sectionsPayload.utf8))) ?? [],
+                htmlContent: cardEntry.htmlContent,
+                htmlExportPath: cardEntry.htmlExportPath
+            )
+            destinationContext.insert(card)
+            paper.paperCard = card
         }
 
         for feedbackEntry in snapshot.feedbackEntries {
@@ -386,7 +408,7 @@ struct PersistentStoreController {
     }
 
     private func makeCurrentContainer(at storeURL: URL) throws -> ModelContainer {
-        let schema = Schema(versionedSchema: PaperMasterSchemaV4.self)
+        let schema = Schema(versionedSchema: PaperMasterSchemaV5.self)
         let configuration = ModelConfiguration(
             "PaperMaster",
             schema: schema,
@@ -513,6 +535,7 @@ private enum PersistentStoreControllerError: LocalizedError {
 
 private struct CurrentStoreSnapshot {
     let papers: [CurrentStorePaperRecord]
+    let paperCards: [CurrentStorePaperCardRecord]
     let annotations: [CurrentStoreAnnotationRecord]
     let settings: [CurrentStoreSettingsRecord]
     let feedbackEntries: [CurrentStoreFeedbackEntryRecord]
@@ -553,6 +576,21 @@ private struct CurrentStoreAnnotationRecord {
     let rectPayload: String
     let createdAt: Date
     let updatedAt: Date
+}
+
+private struct CurrentStorePaperCardRecord {
+    let id: UUID
+    let paperRowID: Int64
+    let createdAt: Date
+    let updatedAt: Date
+    let formatVersion: Int
+    let headline: String
+    let venueLine: String
+    let citationLine: String
+    let keywordsPayload: String
+    let sectionsPayload: String
+    let htmlContent: String
+    let htmlExportPath: String?
 }
 
 private struct CurrentStoreSettingsRecord {
@@ -598,6 +636,7 @@ private enum CurrentStoreSQLiteReader {
 
         return CurrentStoreSnapshot(
             papers: papers,
+            paperCards: try readPaperCards(from: database),
             annotations: try readAnnotations(from: database),
             settings: try readSettings(from: database),
             feedbackEntries: try readFeedbackEntries(from: database)
@@ -678,6 +717,42 @@ private enum CurrentStoreSQLiteReader {
         }
 
         return annotations
+    }
+
+    private static func readPaperCards(from database: OpaquePointer) throws -> [CurrentStorePaperCardRecord] {
+        guard tableExists("ZPAPERCARD", in: database) else {
+            return []
+        }
+
+        let sql = """
+        SELECT ZID, ZPAPER, ZCREATEDAT, ZUPDATEDAT, ZFORMATVERSION, ZHEADLINE, ZVENUELINE,
+               ZCITATIONLINE, ZKEYWORDSPAYLOAD, ZSECTIONSPAYLOAD, ZHTMLCONTENT, ZHTMLEXPORTPATH
+        FROM ZPAPERCARD
+        """
+        let statement = try SQLiteStatement(database: database, sql: sql)
+        defer { statement.finalize() }
+
+        var cards: [CurrentStorePaperCardRecord] = []
+        while statement.step() == SQLITE_ROW {
+            cards.append(
+                CurrentStorePaperCardRecord(
+                    id: try statement.uuid(at: 0),
+                    paperRowID: statement.int64(at: 1),
+                    createdAt: statement.date(at: 2) ?? .now,
+                    updatedAt: statement.date(at: 3) ?? .now,
+                    formatVersion: Int(statement.int64(at: 4)),
+                    headline: statement.string(at: 5) ?? "",
+                    venueLine: statement.string(at: 6) ?? "",
+                    citationLine: statement.string(at: 7) ?? "",
+                    keywordsPayload: statement.string(at: 8) ?? "[]",
+                    sectionsPayload: statement.string(at: 9) ?? "[]",
+                    htmlContent: statement.string(at: 10) ?? "",
+                    htmlExportPath: statement.string(at: 11)
+                )
+            )
+        }
+
+        return cards
     }
 
     private static func readTagNames(from database: OpaquePointer) throws -> [Int64: [String]] {
@@ -1404,11 +1479,242 @@ enum PaperMasterSchemaV4: VersionedSchema {
     static var models: [any PersistentModel.Type] {
         [Paper.self, PaperAnnotation.self, Tag.self, UserSettings.self, FeedbackEntry.self]
     }
+
+    @Model
+    final class Paper {
+        @Attribute(.unique) var id: UUID
+        var title: String
+        var authorsText: String
+        var abstractText: String
+        var venueKey: String?
+        var venueName: String?
+        var doi: String?
+        var bibtex: String?
+        var sourceURLString: String?
+        var pdfURLString: String?
+        var cachedPDFPath: String?
+        var managedPDFLocalPath: String?
+        var managedPDFRemoteURLString: String?
+        var statusRawValue: String
+        var queuePosition: Int
+        var dateAdded: Date
+        var dueDate: Date?
+        var manualDueDateOverride: Date?
+        var startedAt: Date?
+        var completedAt: Date?
+        var notes: String
+        var autoTaggingStatusMessage: String?
+        @Relationship(deleteRule: .cascade, inverse: \Tag.paper) var tags: [Tag]
+        @Relationship(deleteRule: .cascade, inverse: \PaperAnnotation.paper) var annotations: [PaperAnnotation]
+
+        init(
+            id: UUID = UUID(),
+            title: String,
+            authorsText: String = "",
+            abstractText: String = "",
+            venueKey: String? = nil,
+            venueName: String? = nil,
+            doi: String? = nil,
+            bibtex: String? = nil,
+            sourceURLString: String? = nil,
+            pdfURLString: String? = nil,
+            cachedPDFPath: String? = nil,
+            managedPDFLocalPath: String? = nil,
+            managedPDFRemoteURLString: String? = nil,
+            statusRawValue: String = PaperStatus.inbox.rawValue,
+            queuePosition: Int = 0,
+            dateAdded: Date = .now,
+            dueDate: Date? = nil,
+            manualDueDateOverride: Date? = nil,
+            startedAt: Date? = nil,
+            completedAt: Date? = nil,
+            notes: String = "",
+            autoTaggingStatusMessage: String? = nil,
+            tags: [Tag] = [],
+            annotations: [PaperAnnotation] = []
+        ) {
+            self.id = id
+            self.title = title
+            self.authorsText = authorsText
+            self.abstractText = abstractText
+            self.venueKey = venueKey
+            self.venueName = venueName
+            self.doi = doi
+            self.bibtex = bibtex
+            self.sourceURLString = sourceURLString
+            self.pdfURLString = pdfURLString
+            self.cachedPDFPath = cachedPDFPath
+            self.managedPDFLocalPath = managedPDFLocalPath
+            self.managedPDFRemoteURLString = managedPDFRemoteURLString
+            self.statusRawValue = statusRawValue
+            self.queuePosition = queuePosition
+            self.dateAdded = dateAdded
+            self.dueDate = dueDate
+            self.manualDueDateOverride = manualDueDateOverride
+            self.startedAt = startedAt
+            self.completedAt = completedAt
+            self.notes = notes
+            self.autoTaggingStatusMessage = autoTaggingStatusMessage
+            self.tags = tags
+            self.annotations = annotations
+        }
+    }
+
+    @Model
+    final class PaperAnnotation {
+        @Attribute(.unique) var id: UUID
+        var pageIndex: Int
+        var quotedText: String
+        var noteText: String
+        var colorRawValue: String
+        var rectPayload: String
+        var createdAt: Date
+        var updatedAt: Date
+        var paper: Paper?
+
+        init(
+            id: UUID = UUID(),
+            pageIndex: Int,
+            quotedText: String,
+            noteText: String = "",
+            colorRawValue: String = ReaderHighlightColor.yellow.rawValue,
+            rectPayload: String,
+            createdAt: Date = .now,
+            updatedAt: Date = .now,
+            paper: Paper? = nil
+        ) {
+            self.id = id
+            self.pageIndex = pageIndex
+            self.quotedText = quotedText
+            self.noteText = noteText
+            self.colorRawValue = colorRawValue
+            self.rectPayload = rectPayload
+            self.createdAt = createdAt
+            self.updatedAt = updatedAt
+            self.paper = paper
+        }
+    }
+
+    @Model
+    final class Tag {
+        var name: String
+        var paper: Paper?
+
+        init(name: String, paper: Paper? = nil) {
+            self.name = name
+            self.paper = paper
+        }
+    }
+
+    @Model
+    final class UserSettings {
+        @Attribute(.unique) var id: UUID
+        var papersPerDay: Int
+        var dailyReminderTime: Date
+        var autoCachePDFs: Bool
+        var defaultImportBehaviorRawValue: String
+        var paperStorageModeRawValueStorage: String?
+        var customPaperStoragePathStorage: String?
+        var remotePaperStorageHostStorage: String?
+        var remotePaperStoragePortStorage: Int?
+        var remotePaperStorageUsernameStorage: String?
+        var remotePaperStorageDirectoryStorage: String?
+        var aiTaggingEnabled: Bool
+        var aiTaggingBaseURLString: String
+        var aiTaggingModel: String
+
+        init(
+            id: UUID = UUID(),
+            papersPerDay: Int = 1,
+            dailyReminderTime: Date = UserSettings.defaultReminderDate(),
+            autoCachePDFs: Bool = false,
+            defaultImportBehaviorRawValue: String = ImportBehavior.scheduleImmediately.rawValue,
+            paperStorageModeRawValueStorage: String? = PaperStorageMode.defaultLocal.rawValue,
+            customPaperStoragePathStorage: String? = "",
+            remotePaperStorageHostStorage: String? = "",
+            remotePaperStoragePortStorage: Int? = 22,
+            remotePaperStorageUsernameStorage: String? = "",
+            remotePaperStorageDirectoryStorage: String? = "",
+            aiTaggingEnabled: Bool = false,
+            aiTaggingBaseURLString: String = "https://api.openai.com/v1",
+            aiTaggingModel: String = "gpt-4o-mini"
+        ) {
+            self.id = id
+            self.papersPerDay = papersPerDay
+            self.dailyReminderTime = dailyReminderTime
+            self.autoCachePDFs = autoCachePDFs
+            self.defaultImportBehaviorRawValue = defaultImportBehaviorRawValue
+            self.paperStorageModeRawValueStorage = paperStorageModeRawValueStorage
+            self.customPaperStoragePathStorage = customPaperStoragePathStorage
+            self.remotePaperStorageHostStorage = remotePaperStorageHostStorage
+            self.remotePaperStoragePortStorage = remotePaperStoragePortStorage
+            self.remotePaperStorageUsernameStorage = remotePaperStorageUsernameStorage
+            self.remotePaperStorageDirectoryStorage = remotePaperStorageDirectoryStorage
+            self.aiTaggingEnabled = aiTaggingEnabled
+            self.aiTaggingBaseURLString = aiTaggingBaseURLString
+            self.aiTaggingModel = aiTaggingModel
+        }
+
+        static func defaultReminderDate(calendar: Calendar = .current) -> Date {
+            let now = Date()
+            return calendar.date(
+                bySettingHour: 9,
+                minute: 0,
+                second: 0,
+                of: now
+            ) ?? now
+        }
+    }
+
+    @Model
+    final class FeedbackEntry {
+        @Attribute(.unique) var id: UUID
+        var createdAt: Date
+        var screenRawValue: String
+        var screenTitle: String
+        var selectedPaperID: UUID?
+        var selectedPaperTitle: String?
+        var selectedPaperStatusRawValue: String?
+        var intendedAction: String
+        var feedbackText: String
+
+        init(
+            id: UUID = UUID(),
+            createdAt: Date = .now,
+            screenRawValue: String,
+            screenTitle: String,
+            selectedPaperID: UUID? = nil,
+            selectedPaperTitle: String? = nil,
+            selectedPaperStatusRawValue: String? = nil,
+            intendedAction: String,
+            feedbackText: String
+        ) {
+            self.id = id
+            self.createdAt = createdAt
+            self.screenRawValue = screenRawValue
+            self.screenTitle = screenTitle
+            self.selectedPaperID = selectedPaperID
+            self.selectedPaperTitle = selectedPaperTitle
+            self.selectedPaperStatusRawValue = selectedPaperStatusRawValue
+            self.intendedAction = intendedAction
+            self.feedbackText = feedbackText
+        }
+    }
+}
+
+enum PaperMasterSchemaV5: VersionedSchema {
+    static var versionIdentifier: Schema.Version {
+        Schema.Version(5, 0, 0)
+    }
+
+    static var models: [any PersistentModel.Type] {
+        [Paper.self, PaperAnnotation.self, Tag.self, UserSettings.self, FeedbackEntry.self, PaperCard.self]
+    }
 }
 
 enum PaperMasterMigrationPlan: SchemaMigrationPlan {
     static var schemas: [any VersionedSchema.Type] {
-        [PaperMasterSchemaV2.self, PaperMasterSchemaV3.self, PaperMasterSchemaV4.self]
+        [PaperMasterSchemaV2.self, PaperMasterSchemaV3.self, PaperMasterSchemaV4.self, PaperMasterSchemaV5.self]
     }
 
     static var stages: [MigrationStage] {
@@ -1420,6 +1726,10 @@ enum PaperMasterMigrationPlan: SchemaMigrationPlan {
             .lightweight(
                 fromVersion: PaperMasterSchemaV3.self,
                 toVersion: PaperMasterSchemaV4.self
+            ),
+            .lightweight(
+                fromVersion: PaperMasterSchemaV4.self,
+                toVersion: PaperMasterSchemaV5.self
             )
         ]
     }

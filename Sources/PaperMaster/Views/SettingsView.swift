@@ -381,6 +381,7 @@ struct SettingsView: View {
 
     private func persistPaperStorageSettings() {
         services.persistNotes(context: modelContext)
+        services.refreshStorageFolderMonitoring(context: modelContext)
     }
 
     private func refreshRemotePaperStorageIdentity() {

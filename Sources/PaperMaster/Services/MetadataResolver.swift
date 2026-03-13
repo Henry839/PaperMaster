@@ -1,4 +1,5 @@
 import Foundation
+import PDFKit
 
 protocol Networking: Sendable {
     func data(from url: URL) async throws -> (Data, URLResponse)
@@ -70,6 +71,10 @@ struct MetadataResolver: MetadataResolving {
     }
 
     func resolve(url: URL) async throws -> ResolvedPaperMetadata {
+        if url.isFileURL, url.isLikelyPDF {
+            return try await resolveLocalPDF(at: url)
+        }
+
         if let arxivID = url.arxivIdentifier {
             return try await resolveArXiv(id: arxivID)
         }
@@ -87,6 +92,36 @@ struct MetadataResolver: MetadataResolving {
             publishedYear: nil,
             sourceURL: url,
             pdfURL: nil
+        )
+    }
+
+    private func resolveLocalPDF(at fileURL: URL) async throws -> ResolvedPaperMetadata {
+        let extracted = LocalPDFMetadataExtractor().extract(from: fileURL)
+
+        if let arxivID = extracted.arxivID,
+           let arxivResolved = try? await resolveArXiv(id: arxivID) {
+            return ResolvedPaperMetadata(
+                title: arxivResolved.title,
+                authors: arxivResolved.authors,
+                abstractText: extracted.abstractText.isEmpty ? arxivResolved.abstractText : extracted.abstractText,
+                arxivID: arxivResolved.arxivID,
+                doi: extracted.doi ?? arxivResolved.doi,
+                publishedYear: extracted.publishedYear ?? arxivResolved.publishedYear,
+                sourceURL: arxivResolved.sourceURL,
+                pdfURL: fileURL
+            )
+        }
+
+        let title = extracted.title.trimmingCharacters(in: .whitespacesAndNewlines)
+        return ResolvedPaperMetadata(
+            title: title.isEmpty ? inferredTitle(from: fileURL) : title,
+            authors: extracted.authors,
+            abstractText: extracted.abstractText,
+            arxivID: extracted.arxivID,
+            doi: extracted.doi,
+            publishedYear: extracted.publishedYear,
+            sourceURL: fileURL,
+            pdfURL: fileURL
         )
     }
 
@@ -147,6 +182,145 @@ struct MetadataResolver: MetadataResolving {
             .trimmingCharacters(in: .whitespacesAndNewlines)
         return cleaned.isEmpty ? url.host ?? "Untitled Paper" : cleaned
     }
+}
+
+private struct LocalPDFMetadataExtractor {
+    func extract(from fileURL: URL) -> LocalPDFExtractedMetadata {
+        guard let document = PDFDocument(url: fileURL) else {
+            return LocalPDFExtractedMetadata()
+        }
+
+        let documentAttributes = document.documentAttributes ?? [:]
+        let titleFromAttributes = (documentAttributes[PDFDocumentAttribute.titleAttribute] as? String)?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let authorsFromAttributes = parseAuthors(from: documentAttributes[PDFDocumentAttribute.authorAttribute] as? String)
+
+        let firstPagesText = (0..<min(document.pageCount, 3))
+            .compactMap { document.page(at: $0)?.string }
+            .joined(separator: "\n")
+        let normalizedText = firstPagesText.replacingOccurrences(of: "\u{00A0}", with: " ")
+        let lines = normalizedText
+            .components(separatedBy: .newlines)
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { $0.isEmpty == false }
+
+        let heuristicTitle = inferTitle(from: lines)
+        let heuristicAuthors = inferAuthors(from: lines, title: heuristicTitle)
+
+        return LocalPDFExtractedMetadata(
+            title: normalizedPreferredTitle(titleFromAttributes, fallback: heuristicTitle),
+            authors: authorsFromAttributes.isEmpty ? heuristicAuthors : authorsFromAttributes,
+            abstractText: extractAbstract(from: normalizedText),
+            arxivID: firstMatch(in: normalizedText, pattern: #"(?:arXiv:\s*|https?://arxiv\.org/(?:abs|pdf)/)([A-Za-z\-\.]*\d{4}\.\d{4,5}(?:v\d+)?)"#),
+            doi: firstMatch(in: normalizedText, pattern: #"(10\.\d{4,9}/[-._;()/:A-Z0-9]+)"#, options: [.caseInsensitive]),
+            publishedYear: inferPublishedYear(from: normalizedText)
+        )
+    }
+
+    private func normalizedPreferredTitle(_ title: String?, fallback: String) -> String {
+        let trimmedTitle = title?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        guard trimmedTitle.isEmpty == false else { return fallback }
+
+        let lowercased = trimmedTitle.lowercased()
+        if lowercased.hasSuffix(".pdf") || lowercased.hasPrefix("microsoft word") {
+            return fallback
+        }
+
+        return trimmedTitle
+    }
+
+    private func inferTitle(from lines: [String]) -> String {
+        let candidates = lines
+            .filter { line in
+                line.count >= 12 &&
+                line.count <= 220 &&
+                line.range(of: #"^(abstract|arxiv|submitted|accepted|proceedings)"#, options: [.regularExpression, .caseInsensitive]) == nil
+            }
+
+        return candidates.first ?? ""
+    }
+
+    private func inferAuthors(from lines: [String], title: String) -> [String] {
+        guard let titleIndex = lines.firstIndex(where: { $0 == title }) else { return [] }
+
+        for line in lines.dropFirst(titleIndex + 1).prefix(4) {
+            let authors = parseAuthors(from: line)
+            if authors.isEmpty == false {
+                return authors
+            }
+        }
+
+        return []
+    }
+
+    private func parseAuthors(from rawValue: String?) -> [String] {
+        guard let rawValue else { return [] }
+        let cleaned = rawValue
+            .replacingOccurrences(of: "\n", with: " ")
+            .replacingOccurrences(of: " and ", with: ", ", options: .caseInsensitive)
+        return cleaned
+            .split(separator: ",")
+            .map { fragment in
+                fragment
+                    .replacingOccurrences(of: #"\d"#, with: "", options: .regularExpression)
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+            }
+            .filter { $0.count >= 3 && $0.contains(" ") }
+    }
+
+    private func extractAbstract(from text: String) -> String {
+        guard let range = text.range(
+            of: #"(?is)\babstract\b[:\s]*(.+?)(?:\n\s*(?:1[\.\s]+introduction|introduction)\b|$)"#,
+            options: .regularExpression
+        ) else {
+            return ""
+        }
+
+        let raw = String(text[range])
+            .replacingOccurrences(of: #"(?is)^\s*abstract\b[:\s]*"#, with: "", options: .regularExpression)
+            .replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return raw.count > 2_000 ? String(raw.prefix(2_000)) : raw
+    }
+
+    private func inferPublishedYear(from text: String) -> Int? {
+        guard let yearString = firstMatch(in: text, pattern: #"\b(19|20)\d{2}\b"#),
+              let year = Int(yearString) else {
+            return nil
+        }
+        return year
+    }
+
+    private func firstMatch(
+        in text: String,
+        pattern: String,
+        options: NSRegularExpression.Options = []
+    ) -> String? {
+        guard let regex = try? NSRegularExpression(pattern: pattern, options: options) else {
+            return nil
+        }
+
+        let range = NSRange(text.startIndex..<text.endIndex, in: text)
+        guard let match = regex.firstMatch(in: text, options: [], range: range) else {
+            return nil
+        }
+
+        let captureRange = match.numberOfRanges > 1 ? match.range(at: 1) : match.range(at: 0)
+        guard let swiftRange = Range(captureRange, in: text) else {
+            return nil
+        }
+
+        return String(text[swiftRange]).trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+}
+
+private struct LocalPDFExtractedMetadata {
+    var title: String = ""
+    var authors: [String] = []
+    var abstractText: String = ""
+    var arxivID: String?
+    var doi: String?
+    var publishedYear: Int?
 }
 
 private struct ArXivEntry {

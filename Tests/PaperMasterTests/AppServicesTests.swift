@@ -43,6 +43,106 @@ final class AppServicesTests: XCTestCase {
         XCTAssertNil(paper.autoTaggingStatusMessage)
     }
 
+    func testGeneratePaperCardPersistsStructuredCardAndHTML() async throws {
+        let container = try TestSupport.makeInMemoryContainer()
+        let context = ModelContext(container)
+        let settings = UserSettings(aiTaggingEnabled: false)
+        let paper = Paper(
+            title: "Data Shapley in One Training Run",
+            authors: ["Jiachen T. Wang", "Ruoxi Jia"],
+            abstractText: "A method for estimating data value during training.",
+            status: .scheduled
+        )
+        context.insert(settings)
+        context.insert(paper)
+
+        let exportDirectoryURL = try TestSupport.makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: exportDirectoryURL) }
+
+        let generator = SpyPaperCardGenerator { input, configuration in
+            XCTAssertEqual(configuration.model, "gpt-4o-mini")
+            XCTAssertEqual(input.paperTitle, "Data Shapley in One Training Run")
+            return PaperCardOutput(
+                headline: "用单次训练近似数据贡献",
+                venueLine: "ICLR 2025 · oral",
+                citationLine: "作者：Jiachen T. Wang, Ruoxi Jia",
+                keywords: ["Optimization", "Transformer"],
+                sections: [
+                    PaperCardSection(id: "summary", title: "论文内容", emoji: "📌", body: "提出 In-Run Data Shapley。"),
+                    PaperCardSection(id: "innovation", title: "创新点", emoji: "💡", body: "引入高效近似。"),
+                    PaperCardSection(id: "limitations", title: "局限性", emoji: "⚠️", body: "仍有额外计算。")
+                ]
+            )
+        }
+
+        let services = AppServices(
+            importService: PaperImportService(
+                metadataResolver: StubMetadataResolver(
+                    metadata: ResolvedPaperMetadata(title: "", authors: [], abstractText: "", sourceURL: nil, pdfURL: nil)
+                )
+            ),
+            paperCardGenerator: generator,
+            reminderService: ReminderService(center: FakeNotificationCenter()),
+            taggingCredentialStore: FakeTaggingCredentialStore(apiKey: "sk-test"),
+            paperCardHTMLDirectoryURL: exportDirectoryURL
+        )
+
+        await services.generatePaperCard(
+            for: paper,
+            settings: settings,
+            allPapers: [paper],
+            context: context
+        )
+
+        let storedPaper = try XCTUnwrap(context.fetch(FetchDescriptor<Paper>()).first)
+        let storedCard = try XCTUnwrap(storedPaper.paperCard)
+        XCTAssertEqual(storedCard.headline, "用单次训练近似数据贡献")
+        XCTAssertEqual(storedCard.sections.count, 3)
+        XCTAssertTrue(storedCard.htmlContent.contains("<!doctype html>"))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: try XCTUnwrap(storedCard.htmlExportURL).path))
+        XCTAssertEqual(generator.callCount, 1)
+    }
+
+    func testStorageFolderMonitoringImportsExistingPDFs() async throws {
+        let container = try TestSupport.makeInMemoryContainer()
+        let context = ModelContext(container)
+        let storageDirectoryURL = try TestSupport.makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: storageDirectoryURL) }
+
+        let incomingURL = storageDirectoryURL.appendingPathComponent("new-paper.pdf")
+        try Data("pdf".utf8).write(to: incomingURL)
+
+        let settings = UserSettings(
+            paperStorageMode: .customLocal,
+            customPaperStoragePath: storageDirectoryURL.path
+        )
+        context.insert(settings)
+
+        let services = AppServices(
+            importService: PaperImportService(
+                metadataResolver: StubMetadataResolver(
+                    metadata: ResolvedPaperMetadata(
+                        title: "Scanned Paper",
+                        authors: ["Jane Doe"],
+                        abstractText: "Imported from storage watch.",
+                        sourceURL: incomingURL,
+                        pdfURL: incomingURL
+                    )
+                )
+            ),
+            paperStorageService: PaperStorageService(defaultStorageDirectoryURL: storageDirectoryURL),
+            reminderService: ReminderService(center: FakeNotificationCenter())
+        )
+
+        services.refreshStorageFolderMonitoring(context: context)
+        try? await Task.sleep(nanoseconds: 300_000_000)
+
+        let papers = try context.fetch(FetchDescriptor<Paper>())
+        XCTAssertEqual(papers.count, 1)
+        XCTAssertEqual(papers.first?.title, "Scanned Paper")
+        XCTAssertEqual(papers.first?.managedPDFLocalURL?.deletingLastPathComponent().path, storageDirectoryURL.path)
+    }
+
     func testSaveAnnotationCreatesAndDeduplicatesMatchingSelection() throws {
         let container = try TestSupport.makeInMemoryContainer()
         let context = ModelContext(container)

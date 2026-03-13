@@ -22,6 +22,7 @@ struct AppRootView: View {
     @State private var queuePreviewPaperIDs: [UUID]?
     @State private var queueDropTargetPaperID: UUID?
     @State private var fusionSession = FusionReactorSession()
+    @State private var isImportDropTargeted = false
 
     private var settings: UserSettings? {
         settingsList.first
@@ -128,7 +129,11 @@ struct AppRootView: View {
             }
             .task {
                 await services.bootstrap(in: modelContext, settings: settingsList, papers: papers)
+                services.refreshStorageFolderMonitoring(context: modelContext)
                 syncSelectionIfNeeded()
+            }
+            .onChange(of: settingsMonitorSignature) { _, _ in
+                services.refreshStorageFolderMonitoring(context: modelContext)
             }
             .onChange(of: router.selectedScreen) { _, _ in
                 if router.selectedScreen != .queue {
@@ -166,7 +171,19 @@ struct AppRootView: View {
             .overlay(alignment: .top) {
                 noticeBanner
             }
+            .overlay {
+                importDropOverlay
+            }
+            .onDrop(of: [UTType.fileURL], isTargeted: $isImportDropTargeted, perform: handleImportedFiles)
             .animation(.snappy(duration: 0.22), value: services.presentedNotice?.id)
+    }
+
+    private var settingsMonitorSignature: String {
+        guard let settings else { return "settings-unavailable" }
+        return [
+            settings.paperStorageMode.rawValue,
+            settings.customPaperStoragePath
+        ].joined(separator: "|")
     }
 
     @ViewBuilder
@@ -249,6 +266,32 @@ struct AppRootView: View {
         }
     }
 
+    @ViewBuilder
+    private var importDropOverlay: some View {
+        if isImportDropTargeted {
+            ZStack {
+                RoundedRectangle(cornerRadius: 28, style: .continuous)
+                    .fill(Color.black.opacity(0.26))
+                    .padding(18)
+
+                VStack(spacing: 10) {
+                    Image(systemName: "doc.badge.plus")
+                        .font(.system(size: 30, weight: .semibold))
+                    Text("Drop PDFs to add papers")
+                        .font(.title3.weight(.semibold))
+                    Text("PaperMaster will import metadata, rename the files, and store them automatically.")
+                        .font(.subheadline)
+                        .multilineTextAlignment(.center)
+                        .foregroundStyle(.secondary)
+                }
+                .padding(28)
+                .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 24, style: .continuous))
+            }
+            .allowsHitTesting(false)
+            .transition(.opacity.combined(with: .scale(scale: 0.98)))
+        }
+    }
+
     @ToolbarContentBuilder
     private var toolbarContent: some ToolbarContent {
         ToolbarItemGroup(placement: .primaryAction) {
@@ -272,6 +315,60 @@ struct AppRootView: View {
                     }
                 }
                 .disabled(selectedPaper.pdfURL == nil && selectedPaper.cachedPDFURL == nil)
+            }
+        }
+    }
+
+    private func handleImportedFiles(_ providers: [NSItemProvider]) -> Bool {
+        guard let settings else { return false }
+
+        Task { @MainActor in
+            let fileURLs = await loadDroppedFileURLs(from: providers)
+            let pdfURLs = fileURLs.filter { $0.pathExtension.lowercased() == "pdf" }
+            guard pdfURLs.isEmpty == false else { return }
+
+            await services.importDroppedPDFs(
+                at: pdfURLs,
+                settings: settings,
+                currentPapers: papers,
+                in: modelContext
+            )
+        }
+
+        return true
+    }
+
+    private func loadDroppedFileURLs(from providers: [NSItemProvider]) async -> [URL] {
+        var urls: [URL] = []
+        for provider in providers where provider.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) {
+            if let url = await loadFileURL(from: provider) {
+                urls.append(url)
+            }
+        }
+        return urls
+    }
+
+    private func loadFileURL(from provider: NSItemProvider) async -> URL? {
+        await withCheckedContinuation { continuation in
+            provider.loadItem(forTypeIdentifier: UTType.fileURL.identifier, options: nil) { item, _ in
+                if let data = item as? Data,
+                   let url = URL(dataRepresentation: data, relativeTo: nil) {
+                    continuation.resume(returning: url)
+                    return
+                }
+
+                if let url = item as? URL {
+                    continuation.resume(returning: url)
+                    return
+                }
+
+                if let string = item as? String,
+                   let url = URL(string: string) {
+                    continuation.resume(returning: url)
+                    return
+                }
+
+                continuation.resume(returning: nil)
             }
         }
     }
@@ -314,16 +411,19 @@ struct AppRootView: View {
             }
 
             if router.selectedScreen == .library {
-                HStack(spacing: 12) {
-                    TextField("Search titles, authors, abstracts, or tags", text: $librarySearch)
-                        .textFieldStyle(.roundedBorder)
-                    Picker("Status", selection: $libraryStatusFilter) {
-                        Text("All").tag("all")
-                        ForEach(PaperStatus.allCases.filter { $0 != .archived }) { status in
-                            Text(status.title).tag(status.rawValue)
+                ViewThatFits(in: .horizontal) {
+                    HStack(alignment: .center, spacing: 12) {
+                        librarySearchField
+                        libraryStatusPicker
+                    }
+
+                    VStack(alignment: .leading, spacing: 12) {
+                        librarySearchField
+                        HStack(spacing: 12) {
+                            libraryStatusPicker
+                            Spacer(minLength: 0)
                         }
                     }
-                    .pickerStyle(.menu)
                 }
             }
 
@@ -373,6 +473,30 @@ struct AppRootView: View {
             systemImage: "slider.horizontal.3",
             description: Text("Adjust your daily reading capacity, reminder time, and default import behavior from the middle column.")
         )
+    }
+
+    private var librarySearchField: some View {
+        TextField("Fuzzy search titles, authors, keywords, or tags", text: $librarySearch)
+            .textFieldStyle(.roundedBorder)
+            .frame(minWidth: 280, maxWidth: .infinity)
+    }
+
+    private var libraryStatusPicker: some View {
+        HStack(spacing: 10) {
+            Text("Status")
+                .font(.headline)
+                .foregroundStyle(.primary)
+
+            Picker("Status", selection: $libraryStatusFilter) {
+                Text("All").tag("all")
+                ForEach(PaperStatus.allCases.filter { $0 != .archived }) { status in
+                    Text(status.title).tag(status.rawValue)
+                }
+            }
+            .pickerStyle(.menu)
+            .frame(width: 170)
+        }
+        .fixedSize(horizontal: true, vertical: false)
     }
 
     private var summaryText: String {

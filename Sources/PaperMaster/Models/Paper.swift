@@ -27,6 +27,7 @@ final class Paper {
     var autoTaggingStatusMessage: String?
     @Relationship(deleteRule: .cascade, inverse: \Tag.paper) var tags: [Tag]
     @Relationship(deleteRule: .cascade, inverse: \PaperAnnotation.paper) var annotations: [PaperAnnotation]
+    @Relationship(deleteRule: .cascade, inverse: \PaperCard.paper) var paperCard: PaperCard?
 
     init(
         id: UUID = UUID(),
@@ -52,7 +53,8 @@ final class Paper {
         notes: String = "",
         autoTaggingStatusMessage: String? = nil,
         tags: [Tag] = [],
-        annotations: [PaperAnnotation] = []
+        annotations: [PaperAnnotation] = [],
+        paperCard: PaperCard? = nil
     ) {
         self.id = id
         self.title = title
@@ -78,6 +80,7 @@ final class Paper {
         self.autoTaggingStatusMessage = autoTaggingStatusMessage
         self.tags = tags
         self.annotations = annotations
+        self.paperCard = paperCard
     }
 
     var status: PaperStatus {
@@ -177,6 +180,20 @@ final class Paper {
             keys.formUnion(pdfURL.canonicalPaperIdentityKeys)
         }
 
+        if let doi = doi?.normalizedPaperIdentityDOI, doi.isEmpty == false {
+            keys.insert("doi:\(doi)")
+        }
+
         return keys
+    }
+}
+
+private extension String {
+    var normalizedPaperIdentityDOI: String {
+        trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+            .replacingOccurrences(of: "https://doi.org/", with: "")
+            .replacingOccurrences(of: "http://doi.org/", with: "")
+            .replacingOccurrences(of: "doi:", with: "")
     }
 }

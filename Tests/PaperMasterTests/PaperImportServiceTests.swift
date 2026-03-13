@@ -69,6 +69,39 @@ final class PaperImportServiceTests: XCTestCase {
         XCTAssertNil(result.notice)
     }
 
+    func testLocalPDFImportUsesSourceFileURL() async throws {
+        let container = try TestSupport.makeInMemoryContainer()
+        let context = ModelContext(container)
+        let settings = UserSettings(defaultImportBehavior: .scheduleImmediately)
+        context.insert(settings)
+
+        let fileURL = URL(fileURLWithPath: "/tmp/local-paper.pdf")
+        let service = PaperImportService(
+            metadataResolver: StubMetadataResolver(
+                metadata: ResolvedPaperMetadata(
+                    title: "Local Paper",
+                    authors: ["Jane Doe"],
+                    abstractText: "Imported from disk.",
+                    doi: "10.1000/local-paper",
+                    sourceURL: fileURL,
+                    pdfURL: fileURL
+                )
+            )
+        )
+
+        let result = try await service.createPaper(
+            from: PaperCaptureRequest(sourceFileURL: fileURL),
+            settings: settings,
+            in: context
+        )
+
+        XCTAssertEqual(result.paper.title, "Local Paper")
+        XCTAssertEqual(result.paper.authors, ["Jane Doe"])
+        XCTAssertEqual(result.paper.pdfURL?.path, fileURL.path)
+        XCTAssertEqual(result.paper.sourceURL?.path, fileURL.path)
+        XCTAssertEqual(result.paper.doi, "10.1000/local-paper")
+    }
+
     func testAutoTaggingReusesExistingTagsAndPersistsNewOnes() async throws {
         let container = try TestSupport.makeInMemoryContainer()
         let context = ModelContext(container)

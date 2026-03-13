@@ -12,6 +12,7 @@ struct PaperDetailView: View {
     @State private var tagEditorText = ""
     @State private var showDeleteConfirmation = false
     @State private var isOpeningReader = false
+    @State private var isGeneratingPaperCard = false
 
     var body: some View {
         ScrollView {
@@ -23,6 +24,7 @@ struct PaperDetailView: View {
                 bibtexSection
                 tagsSection
                 abstractSection
+                paperCardSection
                 notesSection
             }
             .padding(24)
@@ -161,6 +163,20 @@ struct PaperDetailView: View {
                     )
                 }
                 .disabled(paper.status.isActiveQueue == false)
+
+                Button(isGeneratingPaperCard ? "Generating Card..." : (paper.paperCard == nil ? "Create Paper Card" : "Regenerate Paper Card")) {
+                    Task {
+                        isGeneratingPaperCard = true
+                        await services.generatePaperCard(
+                            for: paper,
+                            settings: settings,
+                            allPapers: allPapers,
+                            context: modelContext
+                        )
+                        isGeneratingPaperCard = false
+                    }
+                }
+                .disabled(isGeneratingPaperCard)
             }
 
             HStack(spacing: 12) {
@@ -419,6 +435,89 @@ struct PaperDetailView: View {
         }
     }
 
+    private var paperCardSection: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(alignment: .top) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Paper Card")
+                        .font(.title3.weight(.semibold))
+                    Text("Saved locally as structured content and HTML so it can be copied, reopened, and migrated with the library.")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                }
+
+                Spacer()
+
+                if let card = paper.paperCard {
+                    HStack(spacing: 10) {
+                        Button("Copy Text") {
+                            services.copyPaperCardText(card)
+                        }
+
+                        Button("Copy HTML") {
+                            services.copyPaperCardHTML(card)
+                        }
+
+                        Button("Open HTML") {
+                            services.openPaperCardHTML(card, paper: paper)
+                        }
+                    }
+                }
+            }
+
+            if let card = paper.paperCard {
+                VStack(alignment: .leading, spacing: 14) {
+                    if card.headline.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false {
+                        Text(card.headline)
+                            .font(.headline)
+                            .padding(14)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .background(Color.accentColor.opacity(0.08))
+                            .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                    }
+
+                    if card.keywords.isEmpty == false {
+                        FlowLayout(card.keywords) { keyword in
+                            Text(keyword)
+                                .font(.caption.weight(.semibold))
+                                .padding(.horizontal, 10)
+                                .padding(.vertical, 6)
+                                .background(Color.purple.opacity(0.10))
+                                .foregroundStyle(Color.purple)
+                                .clipShape(Capsule())
+                        }
+                    }
+
+                    ForEach(card.sections) { section in
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("\(section.emoji) \(section.title)")
+                                .font(.headline)
+                            Text(section.body)
+                                .foregroundStyle(.secondary)
+                                .textSelection(.enabled)
+                        }
+                        .padding(16)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(.background)
+                        .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                                .stroke(Color.primary.opacity(0.06), lineWidth: 1)
+                        )
+                    }
+                }
+            } else {
+                ContentUnavailableView(
+                    "No Paper Card Yet",
+                    systemImage: "rectangle.text.magnifyingglass",
+                    description: Text("Generate a Paper Card to save a reusable structured summary and an HTML version for browser viewing.")
+                )
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 16)
+            }
+        }
+    }
+
     private var venueDisplayText: String? {
         let trimmedVenueName = paper.venueName?.trimmingCharacters(in: .whitespacesAndNewlines)
         let trimmedVenueKey = paper.venueKey?.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -446,5 +545,40 @@ struct PaperDetailView: View {
         }
 
         return paper.managedPDFRemoteURL != nil || paper.pdfURL != nil || paper.cachedPDFURL != nil
+    }
+}
+
+private struct FlowLayout<Data: RandomAccessCollection, Content: View>: View where Data.Element: Hashable {
+    let data: Data
+    let content: (Data.Element) -> Content
+
+    init(_ data: Data, @ViewBuilder content: @escaping (Data.Element) -> Content) {
+        self.data = data
+        self.content = content
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            let rows = makeRows(from: Array(data))
+            ForEach(Array(rows.enumerated()), id: \.offset) { _, row in
+                HStack(spacing: 8) {
+                    ForEach(row, id: \.self) { item in
+                        content(item)
+                    }
+                }
+            }
+        }
+    }
+
+    private func makeRows(from items: [Data.Element]) -> [[Data.Element]] {
+        var rows: [[Data.Element]] = [[]]
+        for item in items {
+            if rows[rows.count - 1].count >= 4 {
+                rows.append([item])
+            } else {
+                rows[rows.count - 1].append(item)
+            }
+        }
+        return rows.filter { $0.isEmpty == false }
     }
 }

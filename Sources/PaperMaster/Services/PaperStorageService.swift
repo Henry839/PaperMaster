@@ -183,6 +183,32 @@ struct PaperStorageService: Sendable {
         )
     }
 
+    @MainActor
+    func storeManagedLocalPDF(
+        from sourceFileURL: URL,
+        for paper: Paper,
+        settings: UserSettings
+    ) async throws -> ManagedPaperStorageLocation {
+        let remotePassword = try remotePasswordIfNeeded(for: settings)
+        guard let configuration = settings.paperStorageConfiguration(
+            defaultDirectoryURL: defaultStorageDirectoryURL,
+            remotePassword: remotePassword
+        ) else {
+            let readiness = settings.paperStorageReadiness(
+                defaultDirectoryURL: defaultStorageDirectoryURL,
+                hasRemotePassword: remotePassword?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+            )
+            throw PaperStorageServiceError.invalidConfiguration(readiness.settingsMessage)
+        }
+
+        return try await storeManagedLocalPDF(
+            from: sourceFileURL,
+            paperID: paper.id,
+            title: paper.title,
+            configuration: configuration
+        )
+    }
+
     func storeManagedPDF(
         from pdfURL: URL,
         paperID: UUID,
@@ -201,6 +227,35 @@ struct PaperStorageService: Sendable {
             )
             return .local(storedURL)
         case let .remote(endpoint, directory, password):
+            let remoteURL = try await uploadManagedPDF(
+                data: data,
+                endpoint: endpoint,
+                remoteDirectory: directory,
+                filename: filename,
+                password: password
+            )
+            return .remote(remoteURL)
+        }
+    }
+
+    func storeManagedLocalPDF(
+        from sourceFileURL: URL,
+        paperID: UUID,
+        title: String,
+        configuration: PaperStorageConfiguration
+    ) async throws -> ManagedPaperStorageLocation {
+        let filename = managedFilename(paperID: paperID, title: title)
+
+        switch configuration.destination {
+        case let .local(directoryURL):
+            let storedURL = try await importLocalManagedPDF(
+                from: sourceFileURL,
+                directoryURL: directoryURL,
+                filename: filename
+            )
+            return .local(storedURL)
+        case let .remote(endpoint, directory, password):
+            let data = try Data(contentsOf: sourceFileURL)
             let remoteURL = try await uploadManagedPDF(
                 data: data,
                 endpoint: endpoint,
@@ -339,6 +394,36 @@ struct PaperStorageService: Sendable {
         try await Task.detached(priority: .utility) {
             try data.write(to: destinationURL, options: [.atomic])
         }.value
+        return destinationURL
+    }
+
+    private func importLocalManagedPDF(
+        from sourceFileURL: URL,
+        directoryURL: URL,
+        filename: String
+    ) async throws -> URL {
+        try fileManager.createDirectory(at: directoryURL, withIntermediateDirectories: true, attributes: nil)
+
+        let standardizedSourceURL = sourceFileURL.standardizedFileURL
+        let destinationURL = directoryURL.appendingPathComponent(filename)
+        let standardizedDestinationURL = destinationURL.standardizedFileURL
+
+        if standardizedSourceURL == standardizedDestinationURL {
+            return destinationURL
+        }
+
+        if standardizedSourceURL.deletingLastPathComponent() == directoryURL.standardizedFileURL {
+            if fileManager.fileExists(atPath: destinationURL.path) {
+                try fileManager.removeItem(at: destinationURL)
+            }
+            try fileManager.moveItem(at: sourceFileURL, to: destinationURL)
+            return destinationURL
+        }
+
+        if fileManager.fileExists(atPath: destinationURL.path) {
+            try fileManager.removeItem(at: destinationURL)
+        }
+        try fileManager.copyItem(at: sourceFileURL, to: destinationURL)
         return destinationURL
     }
 

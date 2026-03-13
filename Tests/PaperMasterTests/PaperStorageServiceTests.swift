@@ -40,6 +40,36 @@ final class PaperStorageServiceTests: XCTestCase {
         XCTAssertEqual(try Data(contentsOf: storedURL), Data("local-pdf".utf8))
     }
 
+    func testStoreManagedLocalPDFRenamesFileAlreadyInsideStorageDirectory() async throws {
+        let storageDirectoryURL = try TestSupport.makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: storageDirectoryURL) }
+
+        let originalURL = storageDirectoryURL.appendingPathComponent("incoming-paper.pdf")
+        try Data("local-pdf".utf8).write(to: originalURL)
+
+        let paper = Paper(
+            id: UUID(uuidString: "12345678-90AB-CDEF-1234-567890ABCDEF")!,
+            title: "Agents & Tools",
+            pdfURL: originalURL
+        )
+        let settings = UserSettings(
+            paperStorageMode: .customLocal,
+            customPaperStoragePath: storageDirectoryURL.path
+        )
+        let service = PaperStorageService(defaultStorageDirectoryURL: storageDirectoryURL)
+
+        let location = try await service.storeManagedLocalPDF(from: originalURL, for: paper, settings: settings)
+
+        guard case let .local(storedURL) = location else {
+            return XCTFail("Expected a local managed storage location")
+        }
+
+        XCTAssertEqual(storedURL.lastPathComponent, "agents-tools-12345678.pdf")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: originalURL.path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: storedURL.path))
+        XCTAssertEqual(try Data(contentsOf: storedURL), Data("local-pdf".utf8))
+    }
+
     func testStoreManagedPDFUploadsToRemoteSSHWithExpectedCommands() async throws {
         let credentialStore = FakePaperStorageCredentialStore(
             storedPasswords: [
