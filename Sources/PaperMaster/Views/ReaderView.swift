@@ -1,3 +1,4 @@
+import AppKit
 import PDFKit
 import SwiftData
 import SwiftUI
@@ -20,6 +21,9 @@ struct ReaderView: View {
     @State private var cachedDocumentContext: ReaderAskAIDocumentContext?
     @State private var askAITask: Task<Void, Never>?
     @State private var saveTask: Task<Void, Never>?
+    @State private var spotlightDismissTask: Task<Void, Never>?
+    @State private var sidebarRevealCommand: ReaderSidebarRevealCommand?
+    @State private var spotlightedAnnotationID: UUID?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -54,6 +58,7 @@ struct ReaderView: View {
         .onDisappear {
             flushPendingSave()
             askAITask?.cancel()
+            spotlightDismissTask?.cancel()
             askAISession.reset()
         }
     }
@@ -92,7 +97,8 @@ struct ReaderView: View {
                 url: fileURL,
                 annotations: sortedAnnotations,
                 selectionState: $selectionState,
-                command: pdfCommand
+                command: pdfCommand,
+                onAnnotationDoubleClick: revealAnnotation
             )
             .background(Color.black.opacity(0.02))
 
@@ -106,15 +112,23 @@ struct ReaderView: View {
     }
 
     private var sidebar: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 18) {
-                askAISection
-                annotationsSection
-                scratchpadSection
+        ScrollViewReader { proxy in
+            ScrollView {
+                VStack(alignment: .leading, spacing: 18) {
+                    askAISection
+                    annotationsSection
+                    scratchpadSection
+                }
+                .padding(18)
             }
-            .padding(18)
+            .background(Color(nsColor: .controlBackgroundColor))
+            .onChange(of: sidebarRevealCommand) { _, newCommand in
+                guard let newCommand else { return }
+                withAnimation(.snappy(duration: 0.22)) {
+                    proxy.scrollTo(newCommand.annotationID, anchor: .center)
+                }
+            }
         }
-        .background(Color(nsColor: .controlBackgroundColor))
     }
 
     private func selectionActionBar(selection: ReaderSelectionSnapshot) -> some View {
@@ -318,9 +332,7 @@ struct ReaderView: View {
                 Text("Answer")
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(.secondary)
-                Text(exchange.answer)
-                    .font(.body)
-                    .fixedSize(horizontal: false, vertical: true)
+                ReaderMarkdownView(markdown: exchange.answer)
             }
         }
         .padding(14)
@@ -372,6 +384,10 @@ struct ReaderView: View {
 
     private func annotationRow(for annotation: PaperAnnotation) -> some View {
         let isExpanded = expandedAnnotationID == annotation.id
+        let isSpotlighted = spotlightedAnnotationID == annotation.id
+        let rowBackgroundColor = isSpotlighted
+            ? Color(nsColor: annotation.color.pdfColor).opacity(0.18)
+            : Color.primary.opacity(isExpanded ? 0.05 : 0.03)
 
         return VStack(alignment: .leading, spacing: 12) {
             HStack(alignment: .top, spacing: 10) {
@@ -435,17 +451,7 @@ struct ReaderView: View {
                         .lineLimit(isExpanded ? nil : 3)
 
                     if isExpanded {
-                        TextEditor(text: annotationNoteBinding(for: annotation))
-                            .focused($focusedField, equals: .annotation(annotation.id))
-                            .font(.body)
-                            .frame(minHeight: 110)
-                            .padding(10)
-                            .background(Color.primary.opacity(0.03))
-                            .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 14, style: .continuous)
-                                    .stroke(Color.primary.opacity(0.05), lineWidth: 1)
-                            )
+                        annotationNoteContent(for: annotation)
                     } else {
                         Text(annotation.notePreviewText)
                             .font(.footnote)
@@ -456,8 +462,21 @@ struct ReaderView: View {
             }
         }
         .padding(14)
-        .background(Color.primary.opacity(isExpanded ? 0.05 : 0.03))
+        .background(rowBackgroundColor)
         .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .overlay {
+            if isSpotlighted {
+                RoundedRectangle(cornerRadius: 18, style: .continuous)
+                    .stroke(Color(nsColor: annotation.color.pdfColor).opacity(0.95), lineWidth: 2)
+            }
+        }
+        .shadow(
+            color: Color(nsColor: annotation.color.pdfColor).opacity(isSpotlighted ? 0.22 : 0),
+            radius: isSpotlighted ? 18 : 0,
+            y: isSpotlighted ? 8 : 0
+        )
+        .id(annotation.id)
+        .animation(.snappy(duration: 0.22), value: isSpotlighted)
     }
 
     private var scratchpadSection: some View {
@@ -471,17 +490,7 @@ struct ReaderView: View {
                     .foregroundStyle(.secondary)
             }
 
-            TextEditor(text: scratchpadBinding)
-                .focused($focusedField, equals: .scratchpad)
-                .font(.body)
-                .frame(minHeight: 220)
-                .padding(10)
-                .background(.background)
-                .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 16, style: .continuous)
-                        .stroke(Color.primary.opacity(0.06), lineWidth: 1)
-                )
+            scratchpadContent
         }
         .padding(18)
         .background(.background)
@@ -494,6 +503,98 @@ struct ReaderView: View {
 
     private var sortedAnnotations: [PaperAnnotation] {
         paper.annotations.sorted(by: PaperAnnotation.sidebarSort)
+    }
+
+    @ViewBuilder
+    private func annotationNoteContent(for annotation: PaperAnnotation) -> some View {
+        if focusedField == .annotation(annotation.id) || annotation.hasNote == false {
+            ZStack(alignment: .topLeading) {
+                TextEditor(text: annotationNoteBinding(for: annotation))
+                    .focused($focusedField, equals: .annotation(annotation.id))
+                    .font(.body)
+                    .scrollContentBackground(.hidden)
+
+                if annotation.hasNote == false {
+                    Text("Add a note with markdown.")
+                        .foregroundStyle(.tertiary)
+                        .padding(.top, 8)
+                        .padding(.leading, 5)
+                        .allowsHitTesting(false)
+                }
+            }
+            .frame(minHeight: 110)
+            .padding(10)
+            .background(Color.primary.opacity(0.03))
+            .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .stroke(Color.primary.opacity(0.05), lineWidth: 1)
+            )
+        } else {
+            ReaderMarkdownView(markdown: annotation.noteText)
+            .frame(maxWidth: .infinity, minHeight: 110, alignment: .topLeading)
+            .padding(10)
+            .background(Color.primary.opacity(0.03))
+            .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .stroke(Color.primary.opacity(0.05), lineWidth: 1)
+            )
+            .contentShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+            .onTapGesture {
+                DispatchQueue.main.async {
+                    focusedField = .annotation(annotation.id)
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var scratchpadContent: some View {
+        if focusedField == .scratchpad || scratchpadIsEmpty {
+            ZStack(alignment: .topLeading) {
+                TextEditor(text: scratchpadBinding)
+                    .focused($focusedField, equals: .scratchpad)
+                    .font(.body)
+                    .scrollContentBackground(.hidden)
+
+                if scratchpadIsEmpty {
+                    Text("Add paper notes with markdown.")
+                        .foregroundStyle(.tertiary)
+                        .padding(.top, 8)
+                        .padding(.leading, 5)
+                        .allowsHitTesting(false)
+                }
+            }
+            .frame(minHeight: 220)
+            .padding(10)
+            .background(.background)
+            .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                    .stroke(Color.primary.opacity(0.06), lineWidth: 1)
+            )
+        } else {
+            ReaderMarkdownView(markdown: paper.notes)
+            .frame(maxWidth: .infinity, minHeight: 220, alignment: .topLeading)
+            .padding(10)
+            .background(.background)
+            .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                    .stroke(Color.primary.opacity(0.06), lineWidth: 1)
+            )
+            .contentShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+            .onTapGesture {
+                DispatchQueue.main.async {
+                    focusedField = .scratchpad
+                }
+            }
+        }
+    }
+
+    private var scratchpadIsEmpty: Bool {
+        paper.notes.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
     private var selectedHighlightColor: ReaderHighlightColor {
@@ -618,6 +719,39 @@ struct ReaderView: View {
         }
     }
 
+    private func revealAnnotation(_ annotationID: UUID) {
+        guard paper.annotations.contains(where: { $0.id == annotationID }) else {
+            return
+        }
+
+        withAnimation(.snappy(duration: 0.18)) {
+            isSidebarVisible = true
+        }
+        sendPDFCommand(.clearSelection)
+
+        DispatchQueue.main.async {
+            sidebarRevealCommand = ReaderSidebarRevealCommand(annotationID: annotationID)
+            spotlightAnnotation(annotationID)
+        }
+    }
+
+    private func spotlightAnnotation(_ annotationID: UUID) {
+        spotlightDismissTask?.cancel()
+        withAnimation(.snappy(duration: 0.18)) {
+            spotlightedAnnotationID = annotationID
+        }
+
+        spotlightDismissTask = Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 1_800_000_000)
+            guard Task.isCancelled == false else { return }
+            guard spotlightedAnnotationID == annotationID else { return }
+
+            withAnimation(.snappy(duration: 0.18)) {
+                spotlightedAnnotationID = nil
+            }
+        }
+    }
+
     private func sendPDFCommand(_ kind: ReaderPDFCommandKind) {
         pdfCommand = ReaderPDFCommand(kind: kind)
     }
@@ -655,6 +789,11 @@ private struct ReaderPDFCommand: Equatable {
     let kind: ReaderPDFCommandKind
 }
 
+private struct ReaderSidebarRevealCommand: Equatable {
+    let id = UUID()
+    let annotationID: UUID
+}
+
 private enum ReaderPDFCommandKind: Equatable {
     case clearSelection
     case jumpToAnnotation(UUID)
@@ -665,40 +804,85 @@ private struct ReaderPDFView: NSViewRepresentable {
     let annotations: [PaperAnnotation]
     @Binding var selectionState: ReaderPDFSelectionState
     let command: ReaderPDFCommand?
+    let onAnnotationDoubleClick: (UUID) -> Void
 
     func makeCoordinator() -> Coordinator {
-        Coordinator(selectionBinding: $selectionState)
+        Coordinator(
+            selectionBinding: $selectionState,
+            onAnnotationDoubleClick: onAnnotationDoubleClick
+        )
     }
 
-    func makeNSView(context: Context) -> PDFView {
-        let view = PDFView()
+    func makeNSView(context: Context) -> InteractivePDFView {
+        let view = InteractivePDFView()
         view.autoScales = true
         view.displayMode = .singlePageContinuous
         view.displayDirection = .vertical
         view.displaysPageBreaks = true
         view.backgroundColor = .windowBackgroundColor
+        view.annotationDoubleClickHandler = { annotationID in
+            context.coordinator.handleAnnotationDoubleClick(annotationID)
+        }
         context.coordinator.configure(pdfView: view)
         context.coordinator.loadDocumentIfNeeded(from: url, into: view)
         context.coordinator.reconcileAnnotations(annotations, in: view)
         return view
     }
 
-    func updateNSView(_ nsView: PDFView, context: Context) {
+    func updateNSView(_ nsView: InteractivePDFView, context: Context) {
         context.coordinator.selectionBinding = $selectionState
+        context.coordinator.onAnnotationDoubleClick = onAnnotationDoubleClick
+        nsView.annotationDoubleClickHandler = { annotationID in
+            context.coordinator.handleAnnotationDoubleClick(annotationID)
+        }
         context.coordinator.loadDocumentIfNeeded(from: url, into: nsView)
         context.coordinator.reconcileAnnotations(annotations, in: nsView)
         context.coordinator.apply(command: command, annotations: annotations, in: nsView)
     }
 
+    final class InteractivePDFView: PDFView {
+        var annotationDoubleClickHandler: ((UUID) -> Void)?
+
+        override func mouseDown(with event: NSEvent) {
+            guard event.clickCount == 2,
+                  let annotationID = annotationIDForDoubleClick(event) else {
+                super.mouseDown(with: event)
+                return
+            }
+
+            annotationDoubleClickHandler?(annotationID)
+        }
+
+        private func annotationIDForDoubleClick(_ event: NSEvent) -> UUID? {
+            let pointInView = convert(event.locationInWindow, from: nil)
+            guard let page = page(for: pointInView, nearest: false) else {
+                return nil
+            }
+
+            let pointOnPage = convert(pointInView, to: page)
+            guard let annotation = page.annotation(at: pointOnPage),
+                  let overlayIdentity = ReaderHighlightOverlayIdentity(userName: annotation.userName) else {
+                return nil
+            }
+
+            return overlayIdentity.annotationID
+        }
+    }
+
     @MainActor
     final class Coordinator: NSObject {
         var selectionBinding: Binding<ReaderPDFSelectionState>
+        var onAnnotationDoubleClick: (UUID) -> Void
         private weak var observedPDFView: PDFView?
         private var loadedURL: URL?
         private var handledCommandID: UUID?
 
-        init(selectionBinding: Binding<ReaderPDFSelectionState>) {
+        init(
+            selectionBinding: Binding<ReaderPDFSelectionState>,
+            onAnnotationDoubleClick: @escaping (UUID) -> Void
+        ) {
             self.selectionBinding = selectionBinding
+            self.onAnnotationDoubleClick = onAnnotationDoubleClick
         }
 
         deinit {
@@ -730,7 +914,7 @@ private struct ReaderPDFView: NSViewRepresentable {
 
             for pageIndex in 0..<document.pageCount {
                 guard let page = document.page(at: pageIndex) else { continue }
-                for annotation in page.annotations where annotation.userName?.hasPrefix("henrypaper:") == true {
+                for annotation in page.annotations where ReaderHighlightOverlayIdentity(userName: annotation.userName) != nil {
                     page.removeAnnotation(annotation)
                 }
             }
@@ -740,10 +924,14 @@ private struct ReaderPDFView: NSViewRepresentable {
                 for (rectIndex, rect) in annotation.rects.enumerated() {
                     let overlay = PDFAnnotation(bounds: rect.cgRect, forType: .highlight, withProperties: nil)
                     overlay.color = annotation.color.pdfColor
-                    overlay.userName = "henrypaper:\(annotation.id.uuidString):\(rectIndex)"
+                    overlay.userName = annotation.overlayIdentity(forRectAt: rectIndex).userName
                     page.addAnnotation(overlay)
                 }
             }
+        }
+
+        func handleAnnotationDoubleClick(_ annotationID: UUID) {
+            onAnnotationDoubleClick(annotationID)
         }
 
         func apply(command: ReaderPDFCommand?, annotations: [PaperAnnotation], in pdfView: PDFView) {

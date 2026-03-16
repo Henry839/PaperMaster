@@ -113,6 +113,18 @@ struct AppRootView: View {
         return previewPapers + missingPapers
     }
 
+    private var overdueScheduledQueuePapers: [Paper] {
+        let calendar = Calendar.current
+        let today = calendar.startOfDay(for: .now)
+        return queuePapers.filter { paper in
+            guard paper.status == .scheduled,
+                  let dueDate = paper.dueDate else {
+                return false
+            }
+            return calendar.startOfDay(for: dueDate) < today
+        }
+    }
+
     var body: some View {
         navigationView
             .sheet(isPresented: importSheetBinding) {
@@ -410,6 +422,10 @@ struct AppRootView: View {
                     .foregroundStyle(.secondary)
             }
 
+            if router.selectedScreen == .queue, let settings, overdueScheduledQueuePapers.isEmpty == false {
+                queueReplanBanner(settings: settings)
+            }
+
             if router.selectedScreen == .library {
                 ViewThatFits(in: .horizontal) {
                     HStack(alignment: .center, spacing: 12) {
@@ -472,6 +488,35 @@ struct AppRootView: View {
             "Scheduler Settings",
             systemImage: "slider.horizontal.3",
             description: Text("Adjust your daily reading capacity, reminder time, and default import behavior from the middle column.")
+        )
+    }
+
+    private func queueReplanBanner(settings: UserSettings) -> some View {
+        HStack(alignment: .center, spacing: 14) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Missed your plan?")
+                    .font(.headline)
+                Text("Move \(overdueScheduledQueuePapers.count) overdue scheduled \(overdueScheduledQueuePapers.count == 1 ? "paper" : "papers") forward and rebuild the queue from today.")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+            }
+
+            Spacer(minLength: 12)
+
+            Button("Replan From Today", systemImage: "calendar.badge.clock") {
+                services.replanQueueFromToday(
+                    papers: papers,
+                    settings: settings,
+                    context: modelContext
+                )
+            }
+            .buttonStyle(.borderedProminent)
+        }
+        .padding(16)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .stroke(Color.accentColor.opacity(0.18), lineWidth: 1)
         )
     }
 

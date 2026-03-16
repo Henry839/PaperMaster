@@ -78,6 +78,38 @@ enum ReaderRectPayloadCodec {
     }
 }
 
+struct ReaderHighlightOverlayIdentity: Equatable {
+    static let prefix = "henrypaper"
+
+    let annotationID: UUID
+    let rectIndex: Int
+
+    init(annotationID: UUID, rectIndex: Int) {
+        self.annotationID = annotationID
+        self.rectIndex = rectIndex
+    }
+
+    init?(userName: String?) {
+        guard let userName else { return nil }
+
+        let components = userName.split(separator: ":", omittingEmptySubsequences: false)
+        guard components.count == 3,
+              String(components[0]) == Self.prefix,
+              let annotationID = UUID(uuidString: String(components[1])),
+              let rectIndex = Int(components[2]),
+              rectIndex >= 0 else {
+            return nil
+        }
+
+        self.annotationID = annotationID
+        self.rectIndex = rectIndex
+    }
+
+    var userName: String {
+        "\(Self.prefix):\(annotationID.uuidString):\(rectIndex)"
+    }
+}
+
 struct ReaderSelectionSnapshot: Equatable {
     let pageIndex: Int
     let quotedText: String
@@ -173,6 +205,10 @@ extension PaperAnnotation {
 
     func touch() {
         updatedAt = .now
+    }
+
+    func overlayIdentity(forRectAt rectIndex: Int) -> ReaderHighlightOverlayIdentity {
+        ReaderHighlightOverlayIdentity(annotationID: id, rectIndex: rectIndex)
     }
 
     static func sidebarSort(lhs: PaperAnnotation, rhs: PaperAnnotation) -> Bool {

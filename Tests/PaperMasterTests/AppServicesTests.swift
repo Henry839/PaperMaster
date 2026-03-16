@@ -821,6 +821,75 @@ final class AppServicesTests: XCTestCase {
         XCTAssertEqual(third.manualDueDateOverride, bottomOverride)
     }
 
+    func testReplanQueueFromTodayRedistributesOverdueScheduledPapers() throws {
+        let container = try TestSupport.makeInMemoryContainer()
+        let context = ModelContext(container)
+        let settings = UserSettings(papersPerDay: 1)
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(secondsFromGMT: 0)!
+        let referenceDate = calendar.date(from: DateComponents(year: 2026, month: 3, day: 16, hour: 9))!
+        let today = calendar.startOfDay(for: referenceDate)
+        let overdueFirst = Paper(
+            title: "Overdue First",
+            status: .scheduled,
+            queuePosition: 0,
+            dueDate: calendar.date(byAdding: .day, value: -2, to: today)
+        )
+        let overdueSecond = Paper(
+            title: "Overdue Second",
+            status: .scheduled,
+            queuePosition: 1,
+            dueDate: calendar.date(byAdding: .day, value: -1, to: today)
+        )
+        let future = Paper(
+            title: "Future",
+            status: .scheduled,
+            queuePosition: 2,
+            dueDate: calendar.date(byAdding: .day, value: 4, to: today)
+        )
+        let reading = Paper(
+            title: "Reading",
+            status: .reading,
+            queuePosition: 3,
+            dueDate: calendar.date(byAdding: .day, value: -3, to: today)
+        )
+
+        context.insert(settings)
+        context.insert(overdueFirst)
+        context.insert(overdueSecond)
+        context.insert(future)
+        context.insert(reading)
+
+        let services = AppServices(
+            importService: PaperImportService(
+                metadataResolver: StubMetadataResolver(
+                    metadata: ResolvedPaperMetadata(
+                        title: "",
+                        authors: [],
+                        abstractText: "",
+                        sourceURL: nil,
+                        pdfURL: nil
+                    )
+                )
+            ),
+            schedulerService: SchedulerService(calendar: calendar),
+            reminderService: ReminderService(center: FakeNotificationCenter())
+        )
+
+        services.replanQueueFromToday(
+            papers: [overdueFirst, overdueSecond, future, reading],
+            settings: settings,
+            context: context,
+            referenceDate: referenceDate
+        )
+
+        XCTAssertEqual(overdueFirst.dueDate, today)
+        XCTAssertEqual(overdueSecond.dueDate, calendar.date(byAdding: .day, value: 1, to: today))
+        XCTAssertEqual(future.dueDate, calendar.date(byAdding: .day, value: 2, to: today))
+        XCTAssertEqual(reading.dueDate, calendar.date(byAdding: .day, value: -3, to: today))
+        XCTAssertEqual(services.presentedNotice?.message, "Replanned 2 overdue papers from today.")
+    }
+
     func testQueueReorderTagEditAndDeleteRemainStableWithOverlappingTagNames() async throws {
         let container = try TestSupport.makeInMemoryContainer()
         let context = ModelContext(container)

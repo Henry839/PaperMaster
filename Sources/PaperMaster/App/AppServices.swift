@@ -252,6 +252,37 @@ final class AppServices {
         }
     }
 
+    func replanQueueFromToday(
+        papers: [Paper],
+        settings: UserSettings,
+        context: ModelContext,
+        referenceDate: Date = .now
+    ) {
+        let calendar = schedulerService.calendar
+        let today = calendar.startOfDay(for: referenceDate)
+        let overdueScheduledPapers = papers.filter { paper in
+            guard paper.status == .scheduled,
+                  let dueDate = paper.dueDate else {
+                return false
+            }
+            return calendar.startOfDay(for: dueDate) < today
+        }
+
+        guard overdueScheduledPapers.isEmpty == false else { return }
+
+        for paper in overdueScheduledPapers {
+            paper.dueDate = nil
+        }
+
+        do {
+            try persistAndSync(allPapers: papers, settings: settings, context: context)
+            let noun = overdueScheduledPapers.count == 1 ? "paper" : "papers"
+            showNotice("Replanned \(overdueScheduledPapers.count) overdue \(noun) from today.")
+        } catch {
+            present(error)
+        }
+    }
+
     func move(
         paper: Paper,
         by offset: Int,

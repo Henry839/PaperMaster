@@ -3,6 +3,23 @@ import XCTest
 @testable import PaperMaster
 
 final class PaperAnnotationTests: XCTestCase {
+    func testHighlightOverlayIdentityRoundTrips() {
+        let annotationID = UUID()
+        let identity = ReaderHighlightOverlayIdentity(annotationID: annotationID, rectIndex: 2)
+
+        let decoded = ReaderHighlightOverlayIdentity(userName: identity.userName)
+
+        XCTAssertEqual(decoded, identity)
+    }
+
+    func testHighlightOverlayIdentityRejectsForeignAndMalformedUserNames() {
+        XCTAssertNil(ReaderHighlightOverlayIdentity(userName: nil))
+        XCTAssertNil(ReaderHighlightOverlayIdentity(userName: "someoneelse:\(UUID().uuidString):0"))
+        XCTAssertNil(ReaderHighlightOverlayIdentity(userName: "henrypaper:not-a-uuid:0"))
+        XCTAssertNil(ReaderHighlightOverlayIdentity(userName: "henrypaper:\(UUID().uuidString):-1"))
+        XCTAssertNil(ReaderHighlightOverlayIdentity(userName: "henrypaper:\(UUID().uuidString)"))
+    }
+
     func testRectPayloadRoundTrips() {
         let rects = [
             CGRect(x: 12.34567, y: 90.12345, width: 42.55555, height: 10.77777),
