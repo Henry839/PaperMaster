@@ -8,60 +8,79 @@ struct ReaderElfPaneOverlayView: View {
             TimelineView(.animation(minimumInterval: 1.0 / 24.0)) { context in
                 let resolvedState = stateWithPaneBounds(CGRect(origin: .zero, size: proxy.size))
                 let layout = ReaderElfOverlayLayout.resolve(for: resolvedState)
+                let motion = ReaderElfPresentationTimeline.snapshot(
+                    for: resolvedState,
+                    layout: layout,
+                    at: context.date
+                )
                 let timestamp = context.date.timeIntervalSinceReferenceDate
-                let bob = sin(timestamp * 2.8) * (resolvedState.activeComment == nil ? 1.8 : 3.0)
+                let bob = CGFloat(sin(timestamp * 2.8)) * motion.bobAmplitude
                 let blinkValue = abs(sin(timestamp * 1.55))
-                let blinkScale = blinkValue > 0.985 ? 0.18 : 1.0
+                let blinkScale: CGFloat = blinkValue > 0.985 ? 0.18 : 1.0
 
                 ZStack(alignment: .topLeading) {
-                    if let comment = resolvedState.activeComment,
-                       let bubbleFrame = layout.bubbleFrame,
-                       let bubblePlacement = layout.bubblePlacement {
-                        ReaderElfBubble(
-                            comment: comment,
-                            placement: bubblePlacement,
-                            tailTip: layout.tailTip.map { tip in
-                                CGPoint(x: tip.x - bubbleFrame.minX, y: tip.y - bubbleFrame.minY)
-                            }
-                        )
-                            .frame(width: bubbleFrame.width, height: bubbleFrame.height, alignment: .topLeading)
-                            .offset(x: bubbleFrame.minX, y: bubbleFrame.minY)
-                            .transition(.opacity.combined(with: .scale(scale: 0.94)))
-                    }
+                    Group {
+                        if let comment = resolvedState.presentedComment,
+                           let bubbleFrame = layout.bubbleFrame,
+                           let bubblePlacement = layout.bubblePlacement,
+                           motion.bubbleOpacity > 0.01 {
+                            ReaderElfBubble(
+                                comment: comment,
+                                placement: bubblePlacement,
+                                tailTip: layout.tailTip.map { tip in
+                                    CGPoint(x: tip.x - bubbleFrame.minX, y: tip.y - bubbleFrame.minY)
+                                }
+                            )
+                                .frame(width: bubbleFrame.width, height: bubbleFrame.height, alignment: .topLeading)
+                                .scaleEffect(motion.bubbleScale, anchor: bubbleAnchor(for: bubblePlacement))
+                                .opacity(motion.bubbleOpacity)
+                                .offset(x: bubbleFrame.minX, y: bubbleFrame.minY)
+                        }
 
-                    ReaderElfFigure(
-                        mood: figureMood(for: resolvedState),
-                        blinkScale: blinkScale,
-                        parked: resolvedState.status == .off
-                    )
-                    .frame(width: layout.figureFrame.width, height: layout.figureFrame.height)
-                    .opacity(figureOpacity(for: resolvedState.status))
-                    .offset(x: layout.figureFrame.minX, y: layout.figureFrame.minY + bob)
+                        ReaderElfFigure(
+                            mood: figureMood(for: resolvedState),
+                            blinkScale: blinkScale,
+                            parked: resolvedState.status == .off
+                        )
+                        .frame(width: motion.figureFrame.width, height: motion.figureFrame.height)
+                        .opacity(figureOpacity(for: resolvedState))
+                        .offset(x: motion.figureFrame.minX, y: motion.figureFrame.minY + bob)
+                    }
+                    .allowsHitTesting(false)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-                .animation(.snappy(duration: 0.34, extraBounce: 0.14), value: animationKey(for: resolvedState, layout: layout))
             }
         }
-        .allowsHitTesting(false)
         .background(Color.clear)
     }
 
     private func stateWithPaneBounds(_ paneBounds: CGRect) -> ReaderElfOverlayState {
-        ReaderElfOverlayState(
+        let geometry = ReaderElfGeometrySnapshot(
+            passageKey: state.passageKey,
+            paneBounds: paneBounds,
+            pageFrame: state.pageFrame,
+            anchorFrame: state.anchorFrame,
+            presentationAnchorFrame: state.presentationAnchorFrame,
+            passageLineFrames: state.passageLineFrames
+        )
+        return ReaderElfOverlayState(
             status: state.status,
-            activeComment: state.activeComment,
-            dockCorner: state.dockCorner,
-            geometry: ReaderElfGeometrySnapshot(
-                paneBounds: paneBounds,
-                pageFrame: state.pageFrame,
-                anchorFrame: state.anchorFrame
+            presentation: ReaderElfPresentationState(
+                comment: state.presentedComment,
+                geometry: geometry,
+                phase: state.presentationPhase,
+                targetResolution: state.targetResolution,
+                phaseStartedAt: state.presentationStartedAt,
+                token: state.presentationToken
             ),
+            dockCorner: state.dockCorner,
+            geometry: geometry,
             preferredBubblePlacement: state.preferredBubblePlacement
         )
     }
 
     private func figureMood(for state: ReaderElfOverlayState) -> ReaderElfMood {
-        if let activeComment = state.activeComment {
+        if let activeComment = state.presentedComment {
             return activeComment.mood
         }
         switch state.status {
@@ -78,8 +97,12 @@ struct ReaderElfPaneOverlayView: View {
         }
     }
 
-    private func figureOpacity(for status: ReaderElfStatus) -> Double {
-        switch status {
+    private func figureOpacity(for state: ReaderElfOverlayState) -> Double {
+        if state.presentedComment != nil {
+            return 0.98
+        }
+
+        switch state.status {
         case .off:
             return 0.5
         case .paused:
@@ -91,15 +114,17 @@ struct ReaderElfPaneOverlayView: View {
         }
     }
 
-    private func animationKey(for state: ReaderElfOverlayState, layout: ReaderElfOverlayLayout) -> String {
-        [
-            state.activeComment?.id.uuidString ?? "idle",
-            state.status.title,
-            "\(layout.figureFrame.minX.rounded())",
-            "\(layout.figureFrame.minY.rounded())",
-            "\(layout.bubbleFrame?.minX.rounded() ?? -1)",
-            "\(layout.bubbleFrame?.minY.rounded() ?? -1)"
-        ].joined(separator: ":")
+    private func bubbleAnchor(for placement: ReaderElfBubblePlacement) -> UnitPoint {
+        switch placement {
+        case .above:
+            return .bottom
+        case .below:
+            return .top
+        case .leading:
+            return .trailing
+        case .trailing:
+            return .leading
+        }
     }
 }
 

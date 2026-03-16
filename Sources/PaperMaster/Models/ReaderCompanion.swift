@@ -8,11 +8,33 @@ enum ReaderFocusPassageSource: String, Equatable, Sendable {
 }
 
 struct ReaderPassageJumpTarget: Equatable, Sendable {
+    static let scrollHorizontalPadding: CGFloat = 40
+    static let scrollVerticalPadding: CGFloat = 92
+
     let pageIndex: Int
     let rects: [ReaderAnnotationRect]
 
     var focusPoint: CGPoint {
         rects.first.map { CGPoint(x: $0.x, y: $0.y + $0.height) } ?? .zero
+    }
+
+    var targetRect: CGRect {
+        let union = rects
+            .map(\.cgRect)
+            .reduce(CGRect.null) { partialResult, rect in
+                partialResult.isNull ? rect : partialResult.union(rect)
+            }
+        guard union.isNull == false else {
+            return CGRect(origin: focusPoint, size: .zero)
+        }
+        return union.standardized
+    }
+
+    var scrollRect: CGRect {
+        targetRect.insetBy(
+            dx: -Self.scrollHorizontalPadding,
+            dy: -Self.scrollVerticalPadding
+        ).standardized
     }
 }
 
@@ -289,6 +311,19 @@ enum ReaderElfDockCorner: Equatable {
     case bottomRight
 }
 
+enum ReaderElfPresentationPhase: String, Equatable {
+    case docked
+    case jumpingIn
+    case presenting
+    case returning
+}
+
+enum ReaderElfPresentationTargetResolution: Equatable {
+    case idle
+    case awaitingGeometry(expectedPassageKey: String)
+    case ready
+}
+
 enum ReaderElfBubblePlacement: String, Equatable {
     case above
     case below
@@ -297,9 +332,50 @@ enum ReaderElfBubblePlacement: String, Equatable {
 }
 
 struct ReaderElfGeometrySnapshot: Equatable {
+    let passageKey: String?
     let paneBounds: CGRect
     let pageFrame: CGRect?
     let anchorFrame: CGRect?
+    let presentationAnchorFrame: CGRect?
+    let passageLineFrames: [CGRect]
+
+    init(
+        passageKey: String?,
+        paneBounds: CGRect,
+        pageFrame: CGRect?,
+        anchorFrame: CGRect?,
+        presentationAnchorFrame: CGRect? = nil,
+        passageLineFrames: [CGRect]
+    ) {
+        self.passageKey = passageKey
+        self.paneBounds = paneBounds.standardized
+        self.pageFrame = pageFrame?.standardized
+        self.anchorFrame = anchorFrame?.standardized
+        self.presentationAnchorFrame = Self.resolvePresentationAnchorFrame(
+            anchorFrame: presentationAnchorFrame?.standardized ?? anchorFrame?.standardized,
+            pageFrame: pageFrame?.standardized,
+            paneBounds: paneBounds.standardized
+        )
+        self.passageLineFrames = passageLineFrames.map(\.standardized)
+    }
+
+    var visiblePageFrame: CGRect? {
+        guard let pageFrame else { return nil }
+        let visibleFrame = pageFrame.intersection(paneBounds)
+        return visibleFrame.isNull ? nil : visibleFrame.standardized
+    }
+
+    func isReadyForPresentation(expectedPassageKey: String) -> Bool {
+        guard passageKey == expectedPassageKey,
+              visiblePageFrame != nil,
+              let presentationAnchorFrame,
+              presentationAnchorFrame.isNull == false,
+              presentationAnchorFrame.width > 0.01,
+              presentationAnchorFrame.height > 0.01 else {
+            return false
+        }
+        return true
+    }
 
     @MainActor
     static func capture(for passage: ReaderFocusPassageSnapshot?, in pdfView: PDFView) -> ReaderElfGeometrySnapshot {
@@ -307,22 +383,49 @@ struct ReaderElfGeometrySnapshot: Equatable {
         guard let passage,
               let document = pdfView.document,
               let page = document.page(at: passage.pageIndex) else {
-            return ReaderElfGeometrySnapshot(paneBounds: paneBounds, pageFrame: nil, anchorFrame: nil)
+            return ReaderElfGeometrySnapshot(
+                passageKey: nil,
+                paneBounds: paneBounds,
+                pageFrame: nil,
+                anchorFrame: nil,
+                presentationAnchorFrame: nil,
+                passageLineFrames: []
+            )
         }
 
         let pageRect = pdfView.convert(page.bounds(for: pdfView.displayBox), from: page).standardized
-        let anchorRect = passage.rects
+        let lineFrames = passage.rects
             .map(\.cgRect)
-            .reduce(CGRect.null) { partialResult, rect in
-                partialResult.isNull ? rect : partialResult.union(rect)
-            }
-        let convertedAnchorRect = anchorRect.isNull ? nil : pdfView.convert(anchorRect, from: page).standardized
+            .map { pdfView.convert($0, from: page).standardized }
+            .map { convertToTopLeading($0, within: paneBounds.height) }
+            .filter { $0.width > 0.01 && $0.height > 0.01 }
+        let anchorRect = lineFrames.reduce(CGRect.null) { partialResult, rect in
+            partialResult.isNull ? rect : partialResult.union(rect)
+        }
 
         return ReaderElfGeometrySnapshot(
+            passageKey: passage.normalizedKey,
             paneBounds: paneBounds,
             pageFrame: convertToTopLeading(pageRect, within: paneBounds.height),
-            anchorFrame: convertedAnchorRect.map { convertToTopLeading($0, within: paneBounds.height) }
+            anchorFrame: anchorRect.isNull ? nil : anchorRect.standardized,
+            passageLineFrames: lineFrames
         )
+    }
+
+    private static func resolvePresentationAnchorFrame(
+        anchorFrame: CGRect?,
+        pageFrame: CGRect?,
+        paneBounds: CGRect
+    ) -> CGRect? {
+        guard let anchorFrame = anchorFrame?.standardized else { return nil }
+        guard let pageFrame = pageFrame?.standardized else { return nil }
+
+        let visiblePageFrame = pageFrame.intersection(paneBounds.standardized)
+        guard visiblePageFrame.isNull == false else { return nil }
+
+        let clippedAnchorFrame = anchorFrame.intersection(visiblePageFrame)
+        guard clippedAnchorFrame.isNull == false else { return nil }
+        return clippedAnchorFrame.standardized
     }
 
     private static func convertToTopLeading(_ rect: CGRect, within containerHeight: CGFloat) -> CGRect {
@@ -335,29 +438,207 @@ struct ReaderElfGeometrySnapshot: Equatable {
     }
 }
 
+struct ReaderElfPresentationState: Equatable {
+    static let jumpLiftDuration: TimeInterval = 0.16
+    static let landingDuration: TimeInterval = 0.26
+    static let lingerDuration: TimeInterval = 14.0
+    static let returnDuration: TimeInterval = 0.28
+    static let visiblePresentationDuration = landingDuration + lingerDuration
+    static let geometryResolutionTimeout: TimeInterval = 0.75
+
+    var comment: ReaderElfComment?
+    var landingGeometry: ReaderElfGeometrySnapshot?
+    var liveGeometry: ReaderElfGeometrySnapshot?
+    var phase: ReaderElfPresentationPhase
+    var targetResolution: ReaderElfPresentationTargetResolution
+    var phaseStartedAt: Date
+    var token: UUID?
+
+    init(
+        comment: ReaderElfComment? = nil,
+        geometry: ReaderElfGeometrySnapshot? = nil,
+        liveGeometry: ReaderElfGeometrySnapshot? = nil,
+        phase: ReaderElfPresentationPhase = .docked,
+        targetResolution: ReaderElfPresentationTargetResolution = .idle,
+        phaseStartedAt: Date = .distantPast,
+        token: UUID? = nil
+    ) {
+        self.comment = comment
+        landingGeometry = geometry
+        self.liveGeometry = liveGeometry ?? geometry
+        self.phase = phase
+        self.targetResolution = targetResolution
+        self.phaseStartedAt = phaseStartedAt
+        self.token = token
+    }
+
+    var geometry: ReaderElfGeometrySnapshot? {
+        landingGeometry
+    }
+
+    var targetPassage: ReaderFocusPassageSnapshot? {
+        comment?.passage
+    }
+
+    var expectedPassageKey: String? {
+        switch targetResolution {
+        case let .awaitingGeometry(expectedPassageKey):
+            return expectedPassageKey
+        case .ready, .idle:
+            return comment?.passage.normalizedKey
+        }
+    }
+
+    var displayedComment: ReaderElfComment? {
+        guard targetResolution == .ready, phase != .docked else {
+            return nil
+        }
+        return comment
+    }
+
+    mutating func start(comment: ReaderElfComment, at: Date = .now) {
+        self.comment = comment
+        landingGeometry = nil
+        liveGeometry = nil
+        phase = .docked
+        targetResolution = .awaitingGeometry(expectedPassageKey: comment.passage.normalizedKey)
+        phaseStartedAt = at
+        token = comment.id
+    }
+
+    mutating func resolveGeometry(_ geometry: ReaderElfGeometrySnapshot, commentID: UUID, at: Date = .now) {
+        guard token == commentID,
+              comment?.id == commentID,
+              geometry.passageKey == comment?.passage.normalizedKey else {
+            return
+        }
+
+        if landingGeometry == nil {
+            landingGeometry = geometry
+        }
+        liveGeometry = geometry
+        phase = .jumpingIn
+        targetResolution = .ready
+        phaseStartedAt = at
+    }
+
+    mutating func refreshLiveGeometry(_ geometry: ReaderElfGeometrySnapshot, commentID: UUID) {
+        guard token == commentID,
+              comment?.id == commentID,
+              targetResolution == .ready,
+              geometry.passageKey == comment?.passage.normalizedKey else {
+            return
+        }
+
+        liveGeometry = geometry
+    }
+
+    mutating func beginPresenting(commentID: UUID, at: Date = .now) {
+        guard token == commentID, comment?.id == commentID, targetResolution == .ready else { return }
+        phase = .presenting
+        phaseStartedAt = at
+    }
+
+    mutating func beginReturning(commentID: UUID, at: Date = .now) {
+        guard token == commentID, comment?.id == commentID, targetResolution == .ready else { return }
+        phase = .returning
+        phaseStartedAt = at
+    }
+
+    mutating func dock(commentID: UUID? = nil, at: Date = .now) {
+        guard commentID == nil || token == commentID else { return }
+        self = ReaderElfPresentationState(phase: .docked, targetResolution: .idle, phaseStartedAt: at)
+    }
+}
+
 struct ReaderElfOverlayState: Equatable {
     let status: ReaderElfStatus
-    let activeComment: ReaderElfComment?
+    let presentedComment: ReaderElfComment?
+    let presentationPhase: ReaderElfPresentationPhase
+    let targetResolution: ReaderElfPresentationTargetResolution
+    let presentationStartedAt: Date
+    let presentationToken: UUID?
     let dockCorner: ReaderElfDockCorner
+    let passageKey: String?
     let paneBounds: CGRect
     let pageFrame: CGRect?
     let anchorFrame: CGRect?
+    let presentationAnchorFrame: CGRect?
+    let passageLineFrames: [CGRect]
     let preferredBubblePlacement: ReaderElfBubblePlacement
 
     init(
         status: ReaderElfStatus,
-        activeComment: ReaderElfComment?,
+        presentation: ReaderElfPresentationState,
         dockCorner: ReaderElfDockCorner = .bottomRight,
         geometry: ReaderElfGeometrySnapshot?,
         preferredBubblePlacement: ReaderElfBubblePlacement = .above
     ) {
+        let resolvedGeometry: ReaderElfGeometrySnapshot?
+        switch presentation.phase {
+        case .docked:
+            resolvedGeometry = geometry
+        case .jumpingIn:
+            resolvedGeometry = presentation.landingGeometry ?? presentation.liveGeometry ?? geometry
+        case .presenting, .returning:
+            resolvedGeometry = presentation.liveGeometry ?? presentation.landingGeometry ?? geometry
+        }
         self.status = status
-        self.activeComment = activeComment
+        presentedComment = presentation.displayedComment
+        presentationPhase = presentation.phase
+        targetResolution = presentation.targetResolution
+        presentationStartedAt = presentation.phaseStartedAt
+        presentationToken = presentation.token
         self.dockCorner = dockCorner
-        self.paneBounds = geometry?.paneBounds ?? .zero
-        self.pageFrame = geometry?.pageFrame
-        self.anchorFrame = geometry?.anchorFrame
+        passageKey = resolvedGeometry?.passageKey
+        paneBounds = resolvedGeometry?.paneBounds ?? .zero
+        pageFrame = resolvedGeometry?.pageFrame
+        anchorFrame = resolvedGeometry?.anchorFrame
+        presentationAnchorFrame = resolvedGeometry?.presentationAnchorFrame
+        passageLineFrames = resolvedGeometry?.passageLineFrames ?? []
         self.preferredBubblePlacement = preferredBubblePlacement
+    }
+}
+
+struct ReaderElfUnderlinePresentationState: Equatable {
+    let commentID: UUID
+    let pageIndex: Int
+    let rects: [ReaderAnnotationRect]
+    let phase: ReaderElfPresentationPhase
+    let phaseStartedAt: Date
+    let mood: ReaderElfMood
+
+    init(
+        commentID: UUID,
+        pageIndex: Int,
+        rects: [ReaderAnnotationRect],
+        phase: ReaderElfPresentationPhase,
+        phaseStartedAt: Date,
+        mood: ReaderElfMood
+    ) {
+        self.commentID = commentID
+        self.pageIndex = pageIndex
+        self.rects = rects
+        self.phase = phase
+        self.phaseStartedAt = phaseStartedAt
+        self.mood = mood
+    }
+
+    init?(_ presentation: ReaderElfPresentationState) {
+        guard presentation.targetResolution == .ready,
+              presentation.phase != .docked,
+              let comment = presentation.comment else {
+            return nil
+        }
+
+        self.init(
+            commentID: comment.id,
+            pageIndex: comment.passage.pageIndex,
+            rects: comment.passage.rects,
+            phase: presentation.phase,
+            phaseStartedAt: presentation.phaseStartedAt,
+            mood: comment.mood
+        )
     }
 }
 
@@ -425,6 +706,7 @@ struct ReaderElfOverlayLayout: Equatable {
     private static let maximumBubbleHeight: CGFloat = 160
     private static let lineHeight: CGFloat = 15
 
+    let dockFrame: CGRect
     let figureFrame: CGRect
     let bubbleFrame: CGRect?
     let bubblePlacement: ReaderElfBubblePlacement?
@@ -436,12 +718,12 @@ struct ReaderElfOverlayLayout: Equatable {
             : state.paneBounds.standardized
         let dockFrame = dockFigureFrame(in: paneBounds, corner: state.dockCorner)
 
-        guard let comment = state.activeComment,
-              let pageFrame = state.pageFrame?.standardized,
-              let anchorFrame = state.anchorFrame?.standardized,
-              pageFrame.intersects(paneBounds),
-              anchorFrame.intersects(paneBounds) else {
+        guard let comment = state.presentedComment,
+              let fullPageFrame = state.pageFrame?.standardized,
+              let anchorFrame = (state.presentationAnchorFrame ?? state.anchorFrame)?.standardized,
+              anchorFrame.isNull == false else {
             return ReaderElfOverlayLayout(
+                dockFrame: dockFrame,
                 figureFrame: dockFrame,
                 bubbleFrame: nil,
                 bubblePlacement: nil,
@@ -449,8 +731,32 @@ struct ReaderElfOverlayLayout: Equatable {
             )
         }
 
-        let boundedPageFrame = pageFrame.insetBy(dx: pageInset, dy: pageInset)
-        let boundedAnchorFrame = anchorFrame.intersection(pageFrame).standardized
+        let visiblePageFrame = fullPageFrame.intersection(paneBounds)
+        guard visiblePageFrame.isNull == false else {
+            return ReaderElfOverlayLayout(
+                dockFrame: dockFrame,
+                figureFrame: dockFrame,
+                bubbleFrame: nil,
+                bubblePlacement: nil,
+                tailTip: nil
+            )
+        }
+
+        let horizontalInset = min(pageInset, max(0, (visiblePageFrame.width - 40) * 0.5))
+        let verticalInset = min(pageInset, max(0, (visiblePageFrame.height - 40) * 0.5))
+        let boundedPageFrame = visiblePageFrame.standardized.insetBy(dx: horizontalInset, dy: verticalInset)
+        let boundedAnchorFrame = anchorFrame.intersection(visiblePageFrame).standardized
+        guard boundedPageFrame.width > 40,
+              boundedPageFrame.height > 40,
+              boundedAnchorFrame.isNull == false else {
+            return ReaderElfOverlayLayout(
+                dockFrame: dockFrame,
+                figureFrame: dockFrame,
+                bubbleFrame: nil,
+                bubblePlacement: nil,
+                tailTip: nil
+            )
+        }
         let bubbleWidth = min(
             boundedPageFrame.width,
             min(maximumBubbleWidth, max(minimumBubbleWidth, boundedPageFrame.width * 0.46))
@@ -487,6 +793,7 @@ struct ReaderElfOverlayLayout: Equatable {
         )
 
         return ReaderElfOverlayLayout(
+            dockFrame: dockFrame,
             figureFrame: figureFrame,
             bubbleFrame: bubbleFrame,
             bubblePlacement: resolvedBubble.placement,
@@ -663,6 +970,198 @@ struct ReaderElfOverlayLayout: Equatable {
 
     private static func clamp(_ value: CGFloat, min minimum: CGFloat, max maximum: CGFloat) -> CGFloat {
         Swift.max(minimum, Swift.min(maximum, value))
+    }
+}
+
+struct ReaderElfMotionSnapshot: Equatable {
+    let figureFrame: CGRect
+    let bubbleOpacity: Double
+    let bubbleScale: CGFloat
+    let bobAmplitude: CGFloat
+}
+
+enum ReaderElfPresentationTimeline {
+    static func snapshot(
+        for state: ReaderElfOverlayState,
+        layout: ReaderElfOverlayLayout,
+        at date: Date
+    ) -> ReaderElfMotionSnapshot {
+        guard state.presentationPhase != .docked,
+              state.presentedComment != nil else {
+            return ReaderElfMotionSnapshot(
+                figureFrame: layout.dockFrame,
+                bubbleOpacity: 0,
+                bubbleScale: 0.94,
+                bobAmplitude: 1.8
+            )
+        }
+
+        let elapsed = max(0, date.timeIntervalSince(state.presentationStartedAt))
+        let liftedFrame = liftFrame(from: layout.dockFrame, to: layout.figureFrame)
+
+        switch state.presentationPhase {
+        case .docked:
+            return ReaderElfMotionSnapshot(
+                figureFrame: layout.dockFrame,
+                bubbleOpacity: 0,
+                bubbleScale: 0.94,
+                bobAmplitude: 1.8
+            )
+        case .jumpingIn:
+            let progress = normalizedProgress(elapsed, duration: ReaderElfPresentationState.jumpLiftDuration)
+            let frame = interpolate(
+                from: layout.dockFrame,
+                to: liftedFrame,
+                progress: easeInOut(progress)
+            )
+            return ReaderElfMotionSnapshot(
+                figureFrame: frame,
+                bubbleOpacity: 0,
+                bubbleScale: 0.94,
+                bobAmplitude: 0
+            )
+        case .presenting:
+            let landingProgress = normalizedProgress(elapsed, duration: ReaderElfPresentationState.landingDuration)
+            let landingEase = easeOutBack(landingProgress)
+            let figureFrame = interpolate(
+                from: liftedFrame,
+                to: layout.figureFrame,
+                progress: landingEase
+            )
+
+            return ReaderElfMotionSnapshot(
+                figureFrame: figureFrame,
+                bubbleOpacity: Double(landingProgress),
+                bubbleScale: 0.94 + (0.06 * landingEase),
+                bobAmplitude: elapsed >= ReaderElfPresentationState.landingDuration ? 2.4 : 0
+            )
+        case .returning:
+            let progress = normalizedProgress(elapsed, duration: ReaderElfPresentationState.returnDuration)
+            var figureFrame = interpolate(
+                from: layout.figureFrame,
+                to: layout.dockFrame,
+                progress: easeInOut(progress)
+            )
+            figureFrame.origin.y -= CGFloat(sin(Double(progress) * .pi)) * 18
+
+            return ReaderElfMotionSnapshot(
+                figureFrame: figureFrame,
+                bubbleOpacity: 0,
+                bubbleScale: 0.94,
+                bobAmplitude: 0
+            )
+        }
+    }
+
+    private static func normalizedProgress(_ progress: TimeInterval) -> CGFloat {
+        CGFloat(max(0, min(1, progress)))
+    }
+
+    private static func normalizedProgress(_ elapsed: TimeInterval, duration: TimeInterval) -> CGFloat {
+        guard duration > 0 else { return 1 }
+        return normalizedProgress(elapsed / duration)
+    }
+
+    private static func liftFrame(from start: CGRect, to end: CGRect) -> CGRect {
+        var frame = interpolate(from: start, to: end, progress: 0.62)
+        frame.origin.y -= 26
+        return frame.standardized
+    }
+
+    private static func interpolate(from start: CGRect, to end: CGRect, progress: CGFloat) -> CGRect {
+        CGRect(
+            x: start.minX + ((end.minX - start.minX) * progress),
+            y: start.minY + ((end.minY - start.minY) * progress),
+            width: start.width + ((end.width - start.width) * progress),
+            height: start.height + ((end.height - start.height) * progress)
+        ).standardized
+    }
+
+    private static func easeInOut(_ progress: CGFloat) -> CGFloat {
+        let clamped = max(0, min(1, progress))
+        let reversed = -2 * clamped + 2
+        return clamped < 0.5
+            ? 4 * clamped * clamped * clamped
+            : 1 - ((reversed * reversed * reversed) / 2)
+    }
+
+    private static func easeOutBack(_ progress: CGFloat) -> CGFloat {
+        let clamped = max(0, min(1, progress))
+        let c1: CGFloat = 1.70158
+        let c3 = c1 + 1
+        let adjusted = clamped - 1
+        return 1 + (c3 * adjusted * adjusted * adjusted) + (c1 * adjusted * adjusted)
+    }
+}
+
+struct ReaderElfUnderlineSegment: Equatable {
+    let frame: CGRect
+    let progress: CGFloat
+}
+
+struct ReaderElfUnderlineMotionSnapshot: Equatable {
+    let opacity: Double
+    let segments: [ReaderElfUnderlineSegment]
+}
+
+enum ReaderElfUnderlineTimeline {
+    static let underlineStartDelay: TimeInterval = 0.08
+    static let underlineSweepDuration: TimeInterval = 0.45
+    static let underlineLineStagger: TimeInterval = 0.06
+
+    static func snapshot(
+        for presentation: ReaderElfUnderlinePresentationState?,
+        at date: Date
+    ) -> ReaderElfUnderlineMotionSnapshot {
+        guard let presentation else {
+            return ReaderElfUnderlineMotionSnapshot(opacity: 0, segments: [])
+        }
+
+        let underlineFrames = underlineFrames(from: presentation.rects)
+        let elapsed = max(0, date.timeIntervalSince(presentation.phaseStartedAt))
+
+        switch presentation.phase {
+        case .docked, .jumpingIn:
+            return ReaderElfUnderlineMotionSnapshot(opacity: 0, segments: [])
+        case .presenting:
+            let segments = underlineFrames.enumerated().map { index, frame in
+                ReaderElfUnderlineSegment(
+                    frame: frame,
+                    progress: underlineProgress(elapsed: elapsed, lineIndex: index)
+                )
+            }
+            let opacity = underlineFrames.isEmpty
+                ? 0
+                : min(1, max(0, (elapsed - underlineStartDelay) / 0.14))
+            return ReaderElfUnderlineMotionSnapshot(opacity: opacity, segments: segments)
+        case .returning:
+            let progress = normalizedProgress(elapsed / ReaderElfPresentationState.returnDuration)
+            return ReaderElfUnderlineMotionSnapshot(
+                opacity: 1 - progress,
+                segments: underlineFrames.map { ReaderElfUnderlineSegment(frame: $0, progress: 1) }
+            )
+        }
+    }
+
+    static func underlineFrames(from rects: [ReaderAnnotationRect]) -> [CGRect] {
+        rects.map(\.cgRect).map { rect in
+            CGRect(
+                x: rect.minX,
+                y: rect.minY - 1,
+                width: max(8, rect.width),
+                height: 2
+            ).standardized
+        }
+    }
+
+    private static func underlineProgress(elapsed: TimeInterval, lineIndex: Int) -> CGFloat {
+        let lineDelay = underlineStartDelay + (Double(lineIndex) * underlineLineStagger)
+        let progress = (elapsed - lineDelay) / underlineSweepDuration
+        return normalizedProgress(progress)
+    }
+
+    private static func normalizedProgress(_ progress: TimeInterval) -> CGFloat {
+        CGFloat(max(0, min(1, progress)))
     }
 }
 

@@ -92,11 +92,19 @@ final class ReaderCompanionPassageExtractionTests: XCTestCase {
         let pageFrame = try XCTUnwrap(geometry.pageFrame)
         let anchorFrame = try XCTUnwrap(geometry.anchorFrame)
 
+        XCTAssertEqual(geometry.passageKey, passage.normalizedKey)
         XCTAssertEqual(geometry.paneBounds.size, pdfView.bounds.size)
+        XCTAssertEqual(geometry.passageLineFrames.count, passage.rects.count)
         XCTAssertTrue(pageFrame.contains(CGPoint(x: anchorFrame.midX, y: anchorFrame.midY)))
         XCTAssertGreaterThanOrEqual(passage.rects.count, 2)
         XCTAssertGreaterThan(anchorFrame.height, passage.rects[0].height)
         XCTAssertGreaterThan(anchorFrame.width, 0)
         XCTAssertGreaterThan(anchorFrame.height, 0)
+        XCTAssertEqual(
+            geometry.passageLineFrames.reduce(CGRect.null) { partialResult, rect in
+                partialResult.isNull ? rect : partialResult.union(rect)
+            }.standardized,
+            anchorFrame
+        )
     }
 }
