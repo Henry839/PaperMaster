@@ -119,6 +119,29 @@ final class SpyReaderAnswerer: ReaderAnswerGenerating, @unchecked Sendable {
     }
 }
 
+final class SpyReaderCompanionGenerator: ReaderCompanionGenerating, @unchecked Sendable {
+    private(set) var inputs: [ReaderCompanionInput] = []
+    private let handler: @Sendable (ReaderCompanionInput, AIProviderConfiguration) throws -> ReaderCompanionOutput
+
+    init(
+        handler: @escaping @Sendable (ReaderCompanionInput, AIProviderConfiguration) throws -> ReaderCompanionOutput
+    ) {
+        self.handler = handler
+    }
+
+    var callCount: Int {
+        inputs.count
+    }
+
+    func generateComment(
+        for input: ReaderCompanionInput,
+        configuration: AIProviderConfiguration
+    ) async throws -> ReaderCompanionOutput {
+        inputs.append(input)
+        return try handler(input, configuration)
+    }
+}
+
 final class SpyPublicationEnricher: PublicationEnriching, @unchecked Sendable {
     private(set) var requests: [PublicationEnrichmentRequest] = []
     private let handler: @Sendable (PublicationEnrichmentRequest) -> PublicationEnrichmentResult
@@ -320,31 +343,38 @@ enum TestSupport {
         body: String
     ) throws {
         let pageBounds = CGRect(x: 0, y: 0, width: 612, height: 792)
-        let image = NSImage(size: pageBounds.size, flipped: false) { _ in
-            NSColor.white.setFill()
-            pageBounds.fill()
+        let textRect = CGRect(x: 48, y: 48, width: 516, height: 696)
+        let paragraphStyle = NSMutableParagraphStyle()
+        paragraphStyle.lineBreakMode = .byWordWrapping
+        let attributedText = NSAttributedString(
+            string: body,
+            attributes: [
+                .font: NSFont.systemFont(ofSize: 15),
+                .foregroundColor: NSColor.black,
+                .paragraphStyle: paragraphStyle
+            ]
+        )
+        let pdfData = NSMutableData()
+        var mediaBox = pageBounds
 
-            let textRect = CGRect(x: 48, y: 48, width: 516, height: 696)
-            let paragraphStyle = NSMutableParagraphStyle()
-            paragraphStyle.lineBreakMode = .byWordWrapping
-            let attributedText = NSAttributedString(
-                string: body,
-                attributes: [
-                    .font: NSFont.systemFont(ofSize: 15),
-                    .foregroundColor: NSColor.black,
-                    .paragraphStyle: paragraphStyle
-                ]
-            )
-            attributedText.draw(in: textRect)
-            return true
+        guard let consumer = CGDataConsumer(data: pdfData as CFMutableData),
+              let context = CGContext(consumer: consumer, mediaBox: &mediaBox, nil) else {
+            throw TestError(message: "Could not create PDF graphics context.")
         }
 
-        guard let pdfPage = PDFPage(image: image) else {
-            throw TestError(message: "Could not create PDF page.")
-        }
+        context.beginPDFPage(nil)
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = NSGraphicsContext(cgContext: context, flipped: false)
+        NSColor.white.setFill()
+        pageBounds.fill()
+        attributedText.draw(in: textRect)
+        NSGraphicsContext.restoreGraphicsState()
+        context.endPDFPage()
+        context.closePDF()
 
-        let document = PDFDocument()
-        document.insert(pdfPage, at: 0)
+        guard let document = PDFDocument(data: pdfData as Data) else {
+            throw TestError(message: "Could not create PDF document.")
+        }
         document.documentAttributes = [
             PDFDocumentAttribute.titleAttribute: title,
             PDFDocumentAttribute.authorAttribute: author ?? ""

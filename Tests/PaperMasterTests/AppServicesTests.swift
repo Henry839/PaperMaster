@@ -377,6 +377,162 @@ final class AppServicesTests: XCTestCase {
         XCTAssertEqual(try context.fetchCount(FetchDescriptor<PaperAnnotation>()), 0)
     }
 
+    func testRequestReaderCompanionCommentPausesWithoutPresentingErrorWhenProviderIsMissing() async throws {
+        let settings = UserSettings(aiTaggingEnabled: false)
+        let paper = Paper(title: "Annotated")
+        let generator = SpyReaderCompanionGenerator { _, _ in
+            XCTFail("Reader companion should not run without a configured provider")
+            return ReaderCompanionOutput(shouldInterrupt: false, mood: .skeptical, comment: "")
+        }
+
+        let services = AppServices(
+            importService: PaperImportService(
+                metadataResolver: StubMetadataResolver(
+                    metadata: ResolvedPaperMetadata(
+                        title: "",
+                        authors: [],
+                        abstractText: "",
+                        sourceURL: nil,
+                        pdfURL: nil
+                    )
+                )
+            ),
+            readerCompanionGenerator: generator,
+            reminderService: ReminderService(center: FakeNotificationCenter()),
+            taggingCredentialStore: FakeTaggingCredentialStore(apiKey: nil)
+        )
+
+        let result = await services.requestReaderCompanionComment(
+            for: paper,
+            passage: try focusPassage(pageIndex: 0, text: "Important quote"),
+            recentComments: [],
+            settings: settings,
+            documentContext: .empty
+        )
+
+        guard case let .paused(reason) = result else {
+            return XCTFail("Expected paused result.")
+        }
+
+        XCTAssertEqual(reason.message, "Save an API key in Keychain to enable AI features.")
+        XCTAssertEqual(generator.callCount, 0)
+        XCTAssertNil(services.presentedError)
+    }
+
+    func testRequestReaderCompanionCommentBuildsPayloadWithRecentComments() async throws {
+        let settings = UserSettings(aiTaggingEnabled: false)
+        let paper = Paper(
+            title: "Transformer Notes",
+            authors: ["Author One", "Author Two"],
+            abstractText: "This paper studies how transformer scaling changes performance.",
+            status: .scheduled
+        )
+        paper.tags = [Tag(name: "nlp"), Tag(name: "transformers")]
+        let recentComment = ReaderElfComment(
+            passage: try focusPassage(pageIndex: 0, text: "Earlier passage"),
+            mood: .skeptical,
+            text: "Earlier criticism."
+        )
+
+        let generator = SpyReaderCompanionGenerator { input, configuration in
+            XCTAssertEqual(configuration.model, "gpt-4o-mini")
+            XCTAssertEqual(input.focusPassage.quotedText, "A useful passage")
+            XCTAssertEqual(input.paperTitle, "Transformer Notes")
+            XCTAssertEqual(input.authorsText, "Author One, Author Two")
+            XCTAssertEqual(input.tagNames, ["nlp", "transformers"])
+            XCTAssertTrue(input.documentWasTruncated)
+            XCTAssertEqual(input.recentComments.map(\.text), ["Earlier criticism."])
+            return ReaderCompanionOutput(
+                shouldInterrupt: true,
+                mood: .skeptical,
+                comment: "This claim still outruns the baseline evidence."
+            )
+        }
+
+        let services = AppServices(
+            importService: PaperImportService(
+                metadataResolver: StubMetadataResolver(
+                    metadata: ResolvedPaperMetadata(
+                        title: "",
+                        authors: [],
+                        abstractText: "",
+                        sourceURL: nil,
+                        pdfURL: nil
+                    )
+                )
+            ),
+            readerCompanionGenerator: generator,
+            reminderService: ReminderService(center: FakeNotificationCenter()),
+            taggingCredentialStore: FakeTaggingCredentialStore(apiKey: "sk-test")
+        )
+
+        let result = await services.requestReaderCompanionComment(
+            for: paper,
+            passage: try focusPassage(pageIndex: 1, text: "A useful passage"),
+            recentComments: [recentComment],
+            settings: settings,
+            documentContext: ReaderAskAIDocumentContext.make(from: String(repeating: "token ", count: 20), limit: 50)
+        )
+
+        guard case let .comment(output) = result else {
+            return XCTFail("Expected comment result.")
+        }
+
+        XCTAssertTrue(output.shouldInterrupt)
+        XCTAssertEqual(output.comment, "This claim still outruns the baseline evidence.")
+        XCTAssertEqual(generator.callCount, 1)
+        XCTAssertNil(services.presentedError)
+    }
+
+    func testAnswerReaderQuestionStillWorksWhenReaderCompanionGeneratorIsConfigured() async throws {
+        let settings = UserSettings(aiTaggingEnabled: false)
+        let paper = Paper(title: "Annotated")
+        let answerer = SpyReaderAnswerer { _, _ in
+            "Reader answer"
+        }
+        let companionGenerator = SpyReaderCompanionGenerator { _, _ in
+            XCTFail("Companion generator should not be used for Ask AI.")
+            return ReaderCompanionOutput(shouldInterrupt: false, mood: .skeptical, comment: "")
+        }
+        let selection = try XCTUnwrap(
+            ReaderSelectionSnapshot(
+                pageIndex: 0,
+                quotedText: "Important quote",
+                rects: [CGRect(x: 10, y: 22, width: 90, height: 12)]
+            )
+        )
+
+        let services = AppServices(
+            importService: PaperImportService(
+                metadataResolver: StubMetadataResolver(
+                    metadata: ResolvedPaperMetadata(
+                        title: "",
+                        authors: [],
+                        abstractText: "",
+                        sourceURL: nil,
+                        pdfURL: nil
+                    )
+                )
+            ),
+            readerAnswerer: answerer,
+            readerCompanionGenerator: companionGenerator,
+            reminderService: ReminderService(center: FakeNotificationCenter()),
+            taggingCredentialStore: FakeTaggingCredentialStore(apiKey: "sk-test")
+        )
+
+        let result = await services.answerReaderQuestion(
+            "What does this mean?",
+            for: paper,
+            selection: selection,
+            settings: settings,
+            documentContext: .empty
+        )
+
+        XCTAssertEqual(result, "Reader answer")
+        XCTAssertEqual(answerer.callCount, 1)
+        XCTAssertEqual(companionGenerator.callCount, 0)
+    }
+
     func testDuplicateImportReturnsExistingPaperWithoutMutatingQueue() async throws {
         let container = try TestSupport.makeInMemoryContainer()
         let context = ModelContext(container)
@@ -416,6 +572,17 @@ final class AppServicesTests: XCTestCase {
         XCTAssertEqual(returnedPaper?.id, existingPaper.id)
         XCTAssertEqual(existingPaper.queuePosition, 0)
         XCTAssertEqual(try context.fetchCount(FetchDescriptor<Paper>()), 1)
+    }
+
+    private func focusPassage(pageIndex: Int, text: String) throws -> ReaderFocusPassageSnapshot {
+        try XCTUnwrap(
+            ReaderFocusPassageSnapshot(
+                pageIndex: pageIndex,
+                quotedText: text,
+                rects: [ReaderAnnotationRect(rect: CGRect(x: 10, y: 22, width: 90, height: 12))],
+                source: .viewport
+            )
+        )
     }
 
     func testImportStoresManagedPDFInDefaultLocalStorage() async throws {

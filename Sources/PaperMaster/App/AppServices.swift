@@ -13,6 +13,12 @@ struct PresentedNotice: Identifiable {
     let message: String
 }
 
+enum ReaderCompanionRequestResult: Equatable {
+    case comment(ReaderCompanionOutput)
+    case noComment
+    case paused(ReaderElfPauseReason)
+}
+
 protocol TextClipboardWriting: Sendable {
     func setString(_ string: String)
 }
@@ -31,6 +37,7 @@ final class AppServices {
     let fusionGenerator: PaperFusionGenerating?
     let paperCardGenerator: PaperCardGenerating?
     let readerAnswerer: ReaderAnswerGenerating?
+    let readerCompanionGenerator: ReaderCompanionGenerating?
     let schedulerService: SchedulerService
     let pdfCacheService: PDFCacheService
     let paperStorageService: PaperStorageService
@@ -56,6 +63,7 @@ final class AppServices {
         fusionGenerator: PaperFusionGenerating? = nil,
         paperCardGenerator: PaperCardGenerating? = nil,
         readerAnswerer: ReaderAnswerGenerating? = nil,
+        readerCompanionGenerator: ReaderCompanionGenerating? = nil,
         schedulerService: SchedulerService = SchedulerService(),
         pdfCacheService: PDFCacheService = PDFCacheService(),
         paperStorageService: PaperStorageService = PaperStorageService(),
@@ -73,6 +81,7 @@ final class AppServices {
         self.fusionGenerator = fusionGenerator
         self.paperCardGenerator = paperCardGenerator
         self.readerAnswerer = readerAnswerer
+        self.readerCompanionGenerator = readerCompanionGenerator
         self.schedulerService = schedulerService
         self.pdfCacheService = pdfCacheService
         self.paperStorageService = paperStorageService
@@ -110,6 +119,7 @@ final class AppServices {
             fusionGenerator: OpenAICompatiblePaperFusionGenerator(),
             paperCardGenerator: OpenAICompatiblePaperCardGenerator(),
             readerAnswerer: OpenAICompatibleReaderAnswerer(),
+            readerCompanionGenerator: OpenAICompatibleReaderCompanionGenerator(),
             paperStorageService: PaperStorageService(
                 credentialStore: paperStorageCredentialStore
             ),
@@ -518,6 +528,48 @@ final class AppServices {
         } catch {
             present(error)
             return nil
+        }
+    }
+
+    func requestReaderCompanionComment(
+        for paper: Paper,
+        passage: ReaderFocusPassageSnapshot,
+        recentComments: [ReaderElfComment],
+        settings: UserSettings,
+        documentContext: ReaderAskAIDocumentContext
+    ) async -> ReaderCompanionRequestResult {
+        guard let readerCompanionGenerator else {
+            return .paused(ReaderElfPauseReason(ReaderCompanionError.generatorUnavailable.localizedDescription))
+        }
+
+        let storedAPIKey: String?
+        do {
+            storedAPIKey = try taggingCredentialStore.loadAPIKey()
+        } catch {
+            return .paused(ReaderElfPauseReason(error.localizedDescription))
+        }
+
+        guard let configuration = settings.aiProviderConfiguration(apiKey: storedAPIKey) else {
+            let readiness = settings.aiProviderReadiness(apiKey: storedAPIKey)
+            return .paused(ReaderElfPauseReason(readiness.settingsMessage))
+        }
+
+        let input = ReaderCompanionInput(
+            focusPassage: passage,
+            paperTitle: paper.title.trimmingCharacters(in: .whitespacesAndNewlines),
+            authorsText: paper.authorsDisplayText,
+            abstractText: truncated(paper.abstractText, limit: 1_400),
+            tagNames: Array(paper.tagNames.prefix(8)),
+            documentText: documentContext.documentText,
+            documentWasTruncated: documentContext.documentWasTruncated,
+            recentComments: recentComments
+        )
+
+        do {
+            let output = try await readerCompanionGenerator.generateComment(for: input, configuration: configuration)
+            return output.shouldInterrupt ? .comment(output) : .noComment
+        } catch {
+            return .paused(ReaderElfPauseReason(error.localizedDescription))
         }
     }
 

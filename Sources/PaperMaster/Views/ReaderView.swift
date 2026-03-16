@@ -5,6 +5,7 @@ import SwiftUI
 
 struct ReaderView: View {
     @AppStorage("reader.lastHighlightColor") private var lastHighlightColorRawValue = ReaderHighlightColor.yellow.rawValue
+    @AppStorage("reader.elf.enabled") private var readerElfEnabled = true
     @Environment(\.modelContext) private var modelContext
     @Environment(AppServices.self) private var services
 
@@ -14,12 +15,18 @@ struct ReaderView: View {
 
     @FocusState private var focusedField: ReaderFocusField?
     @State private var selectionState: ReaderPDFSelectionState = .none
+    @State private var focusPassage: ReaderFocusPassageSnapshot?
+    @State private var elfOverlayGeometry: ReaderElfGeometrySnapshot?
     @State private var isSidebarVisible = true
     @State private var expandedAnnotationID: UUID?
     @State private var pdfCommand: ReaderPDFCommand?
     @State private var askAISession = ReaderAskAISessionState()
+    @State private var elfSession = ReaderElfSessionState()
     @State private var cachedDocumentContext: ReaderAskAIDocumentContext?
     @State private var askAITask: Task<Void, Never>?
+    @State private var elfScheduleTask: Task<Void, Never>?
+    @State private var elfTask: Task<Void, Never>?
+    @State private var elfDismissTask: Task<Void, Never>?
     @State private var saveTask: Task<Void, Never>?
     @State private var spotlightDismissTask: Task<Void, Never>?
     @State private var sidebarRevealCommand: ReaderSidebarRevealCommand?
@@ -44,11 +51,22 @@ struct ReaderView: View {
         .frame(minWidth: 1_120, minHeight: 760)
         .background(Color(nsColor: .windowBackgroundColor))
         .navigationTitle(paper.title)
+        .onAppear {
+            syncElfEnabledState(initial: true)
+        }
         .onChange(of: selectionState) { oldValue, newValue in
             guard oldValue != newValue else { return }
             if case .multiPage = newValue {
                 services.showNotice("Highlights work on one page at a time for now.")
             }
+        }
+        .onChange(of: focusPassage?.normalizedKey) { oldValue, newValue in
+            guard oldValue != newValue else { return }
+            handleFocusPassageChanged()
+        }
+        .onChange(of: readerElfEnabled) { oldValue, newValue in
+            guard oldValue != newValue else { return }
+            syncElfEnabledState(initial: false)
         }
         .onChange(of: focusedField) { oldValue, newValue in
             if oldValue != newValue {
@@ -58,6 +76,7 @@ struct ReaderView: View {
         .onDisappear {
             flushPendingSave()
             askAITask?.cancel()
+            cancelElfWork(clearBubble: true)
             spotlightDismissTask?.cancel()
             askAISession.reset()
         }
@@ -75,6 +94,12 @@ struct ReaderView: View {
             }
 
             Spacer()
+
+            Toggle(isOn: $readerElfEnabled) {
+                Label("Elf", systemImage: readerElfEnabled ? "sparkles" : "moon.zzz")
+                    .font(.subheadline.weight(.semibold))
+            }
+            .toggleStyle(.switch)
 
             Button(isSidebarVisible ? "Hide Sidebar" : "Show Sidebar", systemImage: isSidebarVisible ? "sidebar.right" : "sidebar.right") {
                 withAnimation(.snappy(duration: 0.22)) {
@@ -97,10 +122,15 @@ struct ReaderView: View {
                 url: fileURL,
                 annotations: sortedAnnotations,
                 selectionState: $selectionState,
+                focusPassage: $focusPassage,
+                overlayTargetPassage: elfOverlayTargetPassage,
+                overlayGeometry: $elfOverlayGeometry,
                 command: pdfCommand,
                 onAnnotationDoubleClick: revealAnnotation
             )
             .background(Color.black.opacity(0.02))
+
+            ReaderElfPaneOverlayView(state: elfOverlayState)
 
             if let selection = currentSelection {
                 selectionActionBar(selection: selection)
@@ -115,6 +145,7 @@ struct ReaderView: View {
         ScrollViewReader { proxy in
             ScrollView {
                 VStack(alignment: .leading, spacing: 18) {
+                    elfSection
                     askAISection
                     annotationsSection
                     scratchpadSection
@@ -191,6 +222,112 @@ struct ReaderView: View {
                 .stroke(Color.primary.opacity(0.08), lineWidth: 1)
         )
         .shadow(color: .black.opacity(0.08), radius: 20, y: 10)
+    }
+
+    private var elfSection: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(alignment: .top) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Elf Companion")
+                        .font(.title3.weight(.semibold))
+                    Text("Autonomous critique over the passage you are reading right now.")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+                TimelineView(.periodic(from: .now, by: 1)) { context in
+                    let status = elfSession.status(now: context.date)
+                    Label(status.title, systemImage: status.symbolName)
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(elfStatusColor(for: status))
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 6)
+                        .background(elfStatusColor(for: status).opacity(0.10))
+                        .clipShape(Capsule())
+                }
+            }
+
+            if readerElfEnabled == false {
+                Text("Turn the header toggle back on when you want the elf to watch the page again.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            } else if case let .paused(reason) = elfSession.status() {
+                Text(reason.message)
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            } else if let focusPassage {
+                Text("Watching page \(focusPassage.pageNumber) via \(focusPassage.source == .selection ? "selection" : "viewport").")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            } else {
+                Text("Move through the PDF to give the elf a passage to watch.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            }
+
+            if elfSession.recentComments.isEmpty {
+                ContentUnavailableView(
+                    "No elf comments yet",
+                    systemImage: "figure.fairy",
+                    description: Text("Leave the elf on and dwell on a passage long enough for it to critique the paper.")
+                )
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 18)
+            } else {
+                VStack(alignment: .leading, spacing: 12) {
+                    ForEach(elfSession.recentComments) { comment in
+                        elfCommentCard(comment)
+                    }
+                }
+            }
+        }
+        .padding(18)
+        .background(.background)
+        .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 20, style: .continuous)
+                .stroke(Color.primary.opacity(0.06), lineWidth: 1)
+        )
+    }
+
+    private func elfCommentCard(_ comment: ReaderElfComment) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .firstTextBaseline) {
+                Label(comment.mood.displayName, systemImage: comment.mood.symbolName)
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(Color(nsColor: comment.mood.accentColor))
+                Spacer()
+                Text(comment.createdAt, style: .time)
+                    .font(.caption)
+                    .foregroundStyle(.tertiary)
+            }
+
+            Text(comment.text)
+                .font(.subheadline.weight(.medium))
+
+            Text(comment.passage.quotedText)
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+                .lineLimit(4)
+
+            HStack {
+                Text("Page \(comment.passage.pageNumber)")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Button("Jump") {
+                    jump(to: comment.passage)
+                }
+                .buttonStyle(.borderless)
+            }
+        }
+        .padding(14)
+        .background(Color(nsColor: comment.mood.bubbleTint))
+        .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .stroke(Color(nsColor: comment.mood.accentColor).opacity(0.18), lineWidth: 1)
+        )
     }
 
     private var askAISection: some View {
@@ -532,20 +669,20 @@ struct ReaderView: View {
             )
         } else {
             ReaderMarkdownView(markdown: annotation.noteText)
-            .frame(maxWidth: .infinity, minHeight: 110, alignment: .topLeading)
-            .padding(10)
-            .background(Color.primary.opacity(0.03))
-            .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-            .overlay(
-                RoundedRectangle(cornerRadius: 14, style: .continuous)
-                    .stroke(Color.primary.opacity(0.05), lineWidth: 1)
-            )
-            .contentShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-            .onTapGesture {
-                DispatchQueue.main.async {
-                    focusedField = .annotation(annotation.id)
+                .frame(maxWidth: .infinity, minHeight: 110, alignment: .topLeading)
+                .padding(10)
+                .background(Color.primary.opacity(0.03))
+                .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 14, style: .continuous)
+                        .stroke(Color.primary.opacity(0.05), lineWidth: 1)
+                )
+                .contentShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                .onTapGesture {
+                    DispatchQueue.main.async {
+                        focusedField = .annotation(annotation.id)
+                    }
                 }
-            }
         }
     }
 
@@ -576,20 +713,20 @@ struct ReaderView: View {
             )
         } else {
             ReaderMarkdownView(markdown: paper.notes)
-            .frame(maxWidth: .infinity, minHeight: 220, alignment: .topLeading)
-            .padding(10)
-            .background(.background)
-            .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-            .overlay(
-                RoundedRectangle(cornerRadius: 16, style: .continuous)
-                    .stroke(Color.primary.opacity(0.06), lineWidth: 1)
-            )
-            .contentShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-            .onTapGesture {
-                DispatchQueue.main.async {
-                    focusedField = .scratchpad
+                .frame(maxWidth: .infinity, minHeight: 220, alignment: .topLeading)
+                .padding(10)
+                .background(.background)
+                .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 16, style: .continuous)
+                        .stroke(Color.primary.opacity(0.06), lineWidth: 1)
+                )
+                .contentShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                .onTapGesture {
+                    DispatchQueue.main.async {
+                        focusedField = .scratchpad
+                    }
                 }
-            }
         }
     }
 
@@ -607,6 +744,18 @@ struct ReaderView: View {
             return snapshot
         }
         return nil
+    }
+
+    private var elfOverlayTargetPassage: ReaderFocusPassageSnapshot? {
+        elfSession.activeComment?.passage ?? focusPassage
+    }
+
+    private var elfOverlayState: ReaderElfOverlayState {
+        ReaderElfOverlayState(
+            status: elfSession.status(),
+            activeComment: elfSession.activeComment,
+            geometry: elfOverlayGeometry
+        )
     }
 
     private var scratchpadBinding: Binding<String> {
@@ -707,6 +856,109 @@ struct ReaderView: View {
         return context
     }
 
+    private func syncElfEnabledState(initial: Bool) {
+        if readerElfEnabled {
+            elfSession.setEnabled(true)
+            elfSession.clearPause()
+            if initial == false {
+                handleFocusPassageChanged()
+            }
+        } else {
+            cancelElfWork(clearBubble: true)
+            elfSession.setEnabled(false)
+        }
+    }
+
+    private func handleFocusPassageChanged() {
+        elfScheduleTask?.cancel()
+        elfTask?.cancel()
+        elfSession.cancelEvaluation()
+
+        guard readerElfEnabled,
+              let focusPassage,
+              elfSession.pausedReason == nil else {
+            return
+        }
+
+        let now = Date()
+        let cooldownDelay = max(0, elfSession.cooldownUntil?.timeIntervalSince(now) ?? 0)
+        let triggerDelay = max(8, cooldownDelay)
+
+        elfScheduleTask = Task { @MainActor in
+            try? await Task.sleep(nanoseconds: UInt64(triggerDelay * 1_000_000_000))
+            guard Task.isCancelled == false else { return }
+            guard self.focusPassage?.normalizedKey == focusPassage.normalizedKey else { return }
+            guard elfSession.canEvaluate(focusPassage) else { return }
+            startElfEvaluation(for: focusPassage)
+        }
+    }
+
+    private func startElfEvaluation(for passage: ReaderFocusPassageSnapshot) {
+        guard elfSession.canEvaluate(passage) else { return }
+
+        elfSession.beginEvaluation()
+        let documentContext = resolveReaderDocumentContext()
+        let recentComments = elfSession.promptContextComments
+
+        elfTask?.cancel()
+        elfTask = Task {
+            let result = await services.requestReaderCompanionComment(
+                for: paper,
+                passage: passage,
+                recentComments: recentComments,
+                settings: settings,
+                documentContext: documentContext
+            )
+
+            guard Task.isCancelled == false else { return }
+
+            await MainActor.run {
+                switch result {
+                case let .comment(output):
+                    let comment = ReaderElfComment(
+                        passage: passage,
+                        mood: output.mood,
+                        text: output.comment
+                    )
+                    withAnimation(.snappy(duration: 0.28, extraBounce: 0.12)) {
+                        elfSession.surface(comment)
+                    }
+                    scheduleElfDismiss(for: comment)
+                case .noComment:
+                    elfSession.finishWithoutComment(for: passage)
+                case let .paused(reason):
+                    elfSession.pause(reason)
+                }
+            }
+        }
+    }
+
+    private func scheduleElfDismiss(for comment: ReaderElfComment) {
+        elfDismissTask?.cancel()
+        elfDismissTask = Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 10_000_000_000)
+            guard Task.isCancelled == false else { return }
+            guard elfSession.activeComment?.id == comment.id else { return }
+
+            withAnimation(.snappy(duration: 0.22)) {
+                elfSession.dismissActiveComment()
+            }
+        }
+    }
+
+    private func cancelElfWork(clearBubble: Bool) {
+        elfScheduleTask?.cancel()
+        elfTask?.cancel()
+        elfDismissTask?.cancel()
+        elfScheduleTask = nil
+        elfTask = nil
+        elfDismissTask = nil
+        elfSession.cancelEvaluation()
+        if clearBubble {
+            elfSession.dismissActiveComment()
+        }
+    }
+
     private func expandAnnotation(_ annotationID: UUID, focusEditor: Bool) {
         withAnimation(.snappy(duration: 0.18)) {
             expandedAnnotationID = annotationID
@@ -733,6 +985,10 @@ struct ReaderView: View {
             sidebarRevealCommand = ReaderSidebarRevealCommand(annotationID: annotationID)
             spotlightAnnotation(annotationID)
         }
+    }
+
+    private func jump(to passage: ReaderFocusPassageSnapshot) {
+        sendPDFCommand(.jumpToPassage(passage.jumpTarget))
     }
 
     private func spotlightAnnotation(_ annotationID: UUID) {
@@ -770,6 +1026,21 @@ struct ReaderView: View {
         saveTask = nil
         services.persistNotes(context: modelContext)
     }
+
+    private func elfStatusColor(for status: ReaderElfStatus) -> Color {
+        switch status {
+        case .off:
+            return .secondary
+        case .listening:
+            return .orange
+        case .thinking:
+            return .mint
+        case .coolingDown:
+            return .blue
+        case .paused:
+            return .red
+        }
+    }
 }
 
 private enum ReaderFocusField: Hashable {
@@ -797,18 +1068,25 @@ private struct ReaderSidebarRevealCommand: Equatable {
 private enum ReaderPDFCommandKind: Equatable {
     case clearSelection
     case jumpToAnnotation(UUID)
+    case jumpToPassage(ReaderPassageJumpTarget)
 }
 
 private struct ReaderPDFView: NSViewRepresentable {
     let url: URL
     let annotations: [PaperAnnotation]
     @Binding var selectionState: ReaderPDFSelectionState
+    @Binding var focusPassage: ReaderFocusPassageSnapshot?
+    let overlayTargetPassage: ReaderFocusPassageSnapshot?
+    @Binding var overlayGeometry: ReaderElfGeometrySnapshot?
     let command: ReaderPDFCommand?
     let onAnnotationDoubleClick: (UUID) -> Void
 
     func makeCoordinator() -> Coordinator {
         Coordinator(
             selectionBinding: $selectionState,
+            focusPassageBinding: $focusPassage,
+            overlayGeometryBinding: $overlayGeometry,
+            overlayTargetPassage: overlayTargetPassage,
             onAnnotationDoubleClick: onAnnotationDoubleClick
         )
     }
@@ -826,17 +1104,22 @@ private struct ReaderPDFView: NSViewRepresentable {
         context.coordinator.configure(pdfView: view)
         context.coordinator.loadDocumentIfNeeded(from: url, into: view)
         context.coordinator.reconcileAnnotations(annotations, in: view)
+        context.coordinator.updateOverlayGeometry(in: view)
         return view
     }
 
     func updateNSView(_ nsView: InteractivePDFView, context: Context) {
         context.coordinator.selectionBinding = $selectionState
+        context.coordinator.focusPassageBinding = $focusPassage
+        context.coordinator.overlayGeometryBinding = $overlayGeometry
+        context.coordinator.overlayTargetPassage = overlayTargetPassage
         context.coordinator.onAnnotationDoubleClick = onAnnotationDoubleClick
         nsView.annotationDoubleClickHandler = { annotationID in
             context.coordinator.handleAnnotationDoubleClick(annotationID)
         }
         context.coordinator.loadDocumentIfNeeded(from: url, into: nsView)
         context.coordinator.reconcileAnnotations(annotations, in: nsView)
+        context.coordinator.updateOverlayGeometry(in: nsView)
         context.coordinator.apply(command: command, annotations: annotations, in: nsView)
     }
 
@@ -872,6 +1155,9 @@ private struct ReaderPDFView: NSViewRepresentable {
     @MainActor
     final class Coordinator: NSObject {
         var selectionBinding: Binding<ReaderPDFSelectionState>
+        var focusPassageBinding: Binding<ReaderFocusPassageSnapshot?>
+        var overlayGeometryBinding: Binding<ReaderElfGeometrySnapshot?>
+        var overlayTargetPassage: ReaderFocusPassageSnapshot?
         var onAnnotationDoubleClick: (UUID) -> Void
         private weak var observedPDFView: PDFView?
         private var loadedURL: URL?
@@ -879,9 +1165,15 @@ private struct ReaderPDFView: NSViewRepresentable {
 
         init(
             selectionBinding: Binding<ReaderPDFSelectionState>,
+            focusPassageBinding: Binding<ReaderFocusPassageSnapshot?>,
+            overlayGeometryBinding: Binding<ReaderElfGeometrySnapshot?>,
+            overlayTargetPassage: ReaderFocusPassageSnapshot?,
             onAnnotationDoubleClick: @escaping (UUID) -> Void
         ) {
             self.selectionBinding = selectionBinding
+            self.focusPassageBinding = focusPassageBinding
+            self.overlayGeometryBinding = overlayGeometryBinding
+            self.overlayTargetPassage = overlayTargetPassage
             self.onAnnotationDoubleClick = onAnnotationDoubleClick
         }
 
@@ -899,6 +1191,12 @@ private struct ReaderPDFView: NSViewRepresentable {
                 name: Notification.Name.PDFViewSelectionChanged,
                 object: pdfView
             )
+            NotificationCenter.default.addObserver(
+                self,
+                selector: #selector(handleVisiblePagesChanged(_:)),
+                name: Notification.Name.PDFViewVisiblePagesChanged,
+                object: pdfView
+            )
         }
 
         func loadDocumentIfNeeded(from url: URL, into pdfView: PDFView) {
@@ -907,6 +1205,8 @@ private struct ReaderPDFView: NSViewRepresentable {
             loadedURL = url
             handledCommandID = nil
             selectionBinding.wrappedValue = .none
+            focusPassageBinding.wrappedValue = ReaderFocusPassageExtractor.passage(in: pdfView)
+            updateOverlayGeometry(in: pdfView)
         }
 
         func reconcileAnnotations(_ annotations: [PaperAnnotation], in pdfView: PDFView) {
@@ -930,6 +1230,13 @@ private struct ReaderPDFView: NSViewRepresentable {
             }
         }
 
+        func updateOverlayGeometry(in pdfView: PDFView) {
+            overlayGeometryBinding.wrappedValue = ReaderElfGeometrySnapshot.capture(
+                for: overlayTargetPassage ?? focusPassageBinding.wrappedValue,
+                in: pdfView
+            )
+        }
+
         func handleAnnotationDoubleClick(_ annotationID: UUID) {
             onAnnotationDoubleClick(annotationID)
         }
@@ -942,22 +1249,46 @@ private struct ReaderPDFView: NSViewRepresentable {
             case .clearSelection:
                 pdfView.clearSelection()
                 selectionBinding.wrappedValue = .none
+                updateFocusPassage(in: pdfView)
             case let .jumpToAnnotation(annotationID):
                 jump(to: annotationID, annotations: annotations, in: pdfView)
+            case let .jumpToPassage(target):
+                jump(to: target, in: pdfView)
             }
         }
 
         private func jump(to annotationID: UUID, annotations: [PaperAnnotation], in pdfView: PDFView) {
-            guard let annotation = annotations.first(where: { $0.id == annotationID }),
-                  let page = pdfView.document?.page(at: annotation.pageIndex) else {
+            guard let annotation = annotations.first(where: { $0.id == annotationID }) else {
                 return
             }
 
-            let focusPoint = annotation.rects.first.map {
-                CGPoint(x: $0.x, y: $0.y + $0.height)
-            } ?? CGPoint.zero
-            let destination = PDFDestination(page: page, at: focusPoint)
+            jump(to: annotation.jumpTarget, in: pdfView)
+        }
+
+        private func jump(to target: ReaderPassageJumpTarget, in pdfView: PDFView) {
+            guard let page = pdfView.document?.page(at: target.pageIndex) else {
+                return
+            }
+
+            let destination = PDFDestination(page: page, at: target.focusPoint)
             pdfView.go(to: destination)
+            updateFocusPassage(in: pdfView)
+        }
+
+        private func updateFocusPassage(in pdfView: PDFView) {
+            let selectionState = selectionState(for: pdfView)
+            selectionBinding.wrappedValue = selectionState
+
+            switch selectionState {
+            case let .single(snapshot):
+                focusPassageBinding.wrappedValue = ReaderFocusPassageExtractor.passage(from: snapshot)
+            case .none, .multiPage:
+                focusPassageBinding.wrappedValue = ReaderFocusPassageExtractor.passage(in: pdfView)
+            }
+            overlayGeometryBinding.wrappedValue = ReaderElfGeometrySnapshot.capture(
+                for: overlayTargetPassage ?? focusPassageBinding.wrappedValue,
+                in: pdfView
+            )
         }
 
         private func selectionState(for pdfView: PDFView) -> ReaderPDFSelectionState {
@@ -1007,10 +1338,27 @@ private struct ReaderPDFView: NSViewRepresentable {
         private func handleSelectionChanged(_ notification: Notification) {
             guard let pdfView = notification.object as? PDFView else {
                 selectionBinding.wrappedValue = .none
+                focusPassageBinding.wrappedValue = nil
+                overlayGeometryBinding.wrappedValue = nil
                 return
             }
 
-            selectionBinding.wrappedValue = selectionState(for: pdfView)
+            updateFocusPassage(in: pdfView)
+        }
+
+        @objc
+        private func handleVisiblePagesChanged(_ notification: Notification) {
+            guard let pdfView = notification.object as? PDFView else {
+                return
+            }
+
+            if case .single = selectionBinding.wrappedValue {
+                updateOverlayGeometry(in: pdfView)
+                return
+            }
+
+            focusPassageBinding.wrappedValue = ReaderFocusPassageExtractor.passage(in: pdfView)
+            updateOverlayGeometry(in: pdfView)
         }
     }
 }
