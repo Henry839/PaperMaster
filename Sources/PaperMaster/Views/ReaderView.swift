@@ -139,7 +139,10 @@ struct ReaderView: View {
             )
             .background(Color.black.opacity(0.02))
 
-            ReaderElfPaneOverlayView(state: elfOverlayState)
+            ReaderElfPaneOverlayView(
+                state: elfOverlayState,
+                onTapActiveElf: dismissElfPresentation
+            )
 
             if let selection = currentSelection {
                 selectionActionBar(selection: selection)
@@ -957,7 +960,7 @@ struct ReaderView: View {
     private func resolveElfPresentationIfNeeded() {
         guard let comment = elfPresentation.comment else { return }
         let matchedGeometry = elfOverlayGeometry.flatMap { geometry in
-            geometry.isReadyForPresentation(expectedPassageKey: comment.passage.normalizedKey) ? geometry : nil
+            geometry.matchesPresentationTarget(expectedPassageKey: comment.passage.normalizedKey) ? geometry : nil
         }
 
         switch elfPresentation.targetResolution {
@@ -975,14 +978,7 @@ struct ReaderView: View {
         case .ready:
             if let matchedGeometry {
                 elfPresentation.refreshLiveGeometry(matchedGeometry, commentID: comment.id)
-                return
             }
-
-            guard elfPresentation.phase == .jumpingIn || elfPresentation.phase == .presenting else {
-                return
-            }
-
-            beginElfReturn(for: comment)
         }
     }
 
@@ -1014,21 +1010,6 @@ struct ReaderView: View {
             guard elfPresentation.token == comment.id else { return }
             elfPresentation.beginPresenting(commentID: comment.id)
         }
-
-        scheduleElfDismiss(for: comment)
-    }
-
-    private func scheduleElfDismiss(for comment: ReaderElfComment) {
-        elfDismissTask?.cancel()
-        elfDismissTask = Task { @MainActor in
-            let totalDelay = ReaderElfPresentationState.jumpLiftDuration
-                + ReaderElfPresentationState.visiblePresentationDuration
-            try? await Task.sleep(nanoseconds: UInt64(totalDelay * 1_000_000_000))
-            guard Task.isCancelled == false else { return }
-            guard elfPresentation.token == comment.id else { return }
-
-            beginElfReturn(for: comment)
-        }
     }
 
     private func beginElfReturn(for comment: ReaderElfComment) {
@@ -1048,6 +1029,11 @@ struct ReaderView: View {
             guard elfPresentation.token == comment.id else { return }
             elfPresentation.dock(commentID: comment.id)
         }
+    }
+
+    private func dismissElfPresentation() {
+        guard let comment = elfPresentation.comment else { return }
+        beginElfReturn(for: comment)
     }
 
     private func cancelElfWork(clearBubble: Bool) {

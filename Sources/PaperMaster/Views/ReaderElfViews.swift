@@ -2,6 +2,7 @@ import SwiftUI
 
 struct ReaderElfPaneOverlayView: View {
     let state: ReaderElfOverlayState
+    let onTapActiveElf: (() -> Void)?
 
     var body: some View {
         GeometryReader { proxy in
@@ -47,6 +48,20 @@ struct ReaderElfPaneOverlayView: View {
                         .offset(x: motion.figureFrame.minX, y: motion.figureFrame.minY + bob)
                     }
                     .allowsHitTesting(false)
+
+                    if let onTapActiveElf,
+                       resolvedState.presentedComment != nil,
+                       resolvedState.presentationPhase != .returning {
+                        Color.clear
+                            .frame(
+                                width: motion.figureFrame.width,
+                                height: motion.figureFrame.height,
+                                alignment: .topLeading
+                            )
+                            .contentShape(Rectangle())
+                            .offset(x: motion.figureFrame.minX, y: motion.figureFrame.minY + bob)
+                            .onTapGesture(perform: onTapActiveElf)
+                    }
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             }

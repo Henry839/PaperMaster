@@ -268,6 +268,27 @@ final class ReaderCompanionTests: XCTestCase {
         XCTAssertNotNil(layout.bubbleFrame)
     }
 
+    func testOverlayLayoutMovesElfOffscreenInsteadOfDockingWhenTargetParagraphIsOffscreen() throws {
+        let comment = try comment(text: "This paragraph still overclaims what the evidence establishes.")
+        let geometry = geometry(
+            passageKey: comment.passage.normalizedKey,
+            paneBounds: CGRect(x: 0, y: 0, width: 920, height: 720),
+            pageFrame: CGRect(x: 160, y: -680, width: 520, height: 620),
+            anchorFrame: CGRect(x: 310, y: -232, width: 150, height: 42),
+            passageLineFrames: [CGRect(x: 310, y: -232, width: 150, height: 18)]
+        )
+        let state = overlayState(
+            status: .coolingDown(until: .now),
+            comment: comment,
+            geometry: geometry
+        )
+        let layout = ReaderElfOverlayLayout.resolve(for: state)
+
+        XCTAssertNotEqual(layout.figureFrame, layout.dockFrame)
+        XCTAssertNil(layout.bubbleFrame)
+        XCTAssertLessThan(layout.figureFrame.maxY, geometry.paneBounds.minY)
+    }
+
     func testPresentationStateProgressesThroughPhasesAndClearsAtDock() throws {
         var presentation = ReaderElfPresentationState()
         let comment = try comment(text: "This control is too weak for the claim.")
@@ -574,6 +595,19 @@ final class ReaderCompanionTests: XCTestCase {
             passageLineFrames: [CGRect(x: 312, y: 286, width: 160, height: 18)]
         )
 
+        XCTAssertFalse(geometry.isReadyForPresentation(expectedPassageKey: "target"))
+    }
+
+    func testPresentationTargetMatchingSucceedsEvenWhenParagraphIsOffscreen() {
+        let geometry = geometry(
+            passageKey: "target",
+            paneBounds: CGRect(x: 0, y: 0, width: 920, height: 720),
+            pageFrame: CGRect(x: 160, y: 780, width: 520, height: 620),
+            anchorFrame: CGRect(x: 312, y: 812, width: 160, height: 42),
+            passageLineFrames: [CGRect(x: 312, y: 812, width: 160, height: 18)]
+        )
+
+        XCTAssertTrue(geometry.matchesPresentationTarget(expectedPassageKey: "target"))
         XCTAssertFalse(geometry.isReadyForPresentation(expectedPassageKey: "target"))
     }
 

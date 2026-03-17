@@ -365,8 +365,19 @@ struct ReaderElfGeometrySnapshot: Equatable {
         return visibleFrame.isNull ? nil : visibleFrame.standardized
     }
 
-    func isReadyForPresentation(expectedPassageKey: String) -> Bool {
+    func matchesPresentationTarget(expectedPassageKey: String) -> Bool {
         guard passageKey == expectedPassageKey,
+              let anchorFrame,
+              anchorFrame.isNull == false,
+              anchorFrame.width > 0.01,
+              anchorFrame.height > 0.01 else {
+            return false
+        }
+        return true
+    }
+
+    func isReadyForPresentation(expectedPassageKey: String) -> Bool {
+        guard matchesPresentationTarget(expectedPassageKey: expectedPassageKey),
               visiblePageFrame != nil,
               let presentationAnchorFrame,
               presentationAnchorFrame.isNull == false,
@@ -701,6 +712,7 @@ struct ReaderElfOverlayLayout: Equatable {
     private static let pageInset: CGFloat = 14
     private static let bubbleGap: CGFloat = 12
     private static let figureGap: CGFloat = 8
+    private static let offscreenTravelMargin: CGFloat = 42
     private static let bubblePadding: CGFloat = 24
     private static let minimumBubbleHeight: CGFloat = 76
     private static let maximumBubbleHeight: CGFloat = 160
@@ -720,8 +732,8 @@ struct ReaderElfOverlayLayout: Equatable {
 
         guard let comment = state.presentedComment,
               let fullPageFrame = state.pageFrame?.standardized,
-              let anchorFrame = (state.presentationAnchorFrame ?? state.anchorFrame)?.standardized,
-              anchorFrame.isNull == false else {
+              let rawAnchorFrame = state.anchorFrame?.standardized,
+              rawAnchorFrame.isNull == false else {
             return ReaderElfOverlayLayout(
                 dockFrame: dockFrame,
                 figureFrame: dockFrame,
@@ -732,7 +744,10 @@ struct ReaderElfOverlayLayout: Equatable {
         }
 
         let visiblePageFrame = fullPageFrame.intersection(paneBounds)
-        guard visiblePageFrame.isNull == false else {
+        let visibleAnchorFrame = state.presentationAnchorFrame?.standardized
+
+        guard let anchorFrame = (visibleAnchorFrame ?? rawAnchorFrame).standardizedIfRenderable,
+              anchorFrame.isNull == false else {
             return ReaderElfOverlayLayout(
                 dockFrame: dockFrame,
                 figureFrame: dockFrame,
@@ -742,16 +757,32 @@ struct ReaderElfOverlayLayout: Equatable {
             )
         }
 
+        guard let visiblePageFrame = visiblePageFrame.standardizedIfRenderable,
+              let boundedAnchorFrame = anchorFrame.intersection(visiblePageFrame).standardizedIfRenderable else {
+            let offscreenFigureFrame = offscreenFigureFrame(
+                anchorFrame: rawAnchorFrame,
+                paneBounds: paneBounds
+            )
+            return ReaderElfOverlayLayout(
+                dockFrame: dockFrame,
+                figureFrame: offscreenFigureFrame,
+                bubbleFrame: nil,
+                bubblePlacement: nil,
+                tailTip: nil
+            )
+        }
+
         let horizontalInset = min(pageInset, max(0, (visiblePageFrame.width - 40) * 0.5))
         let verticalInset = min(pageInset, max(0, (visiblePageFrame.height - 40) * 0.5))
         let boundedPageFrame = visiblePageFrame.standardized.insetBy(dx: horizontalInset, dy: verticalInset)
-        let boundedAnchorFrame = anchorFrame.intersection(visiblePageFrame).standardized
         guard boundedPageFrame.width > 40,
-              boundedPageFrame.height > 40,
-              boundedAnchorFrame.isNull == false else {
+              boundedPageFrame.height > 40 else {
             return ReaderElfOverlayLayout(
                 dockFrame: dockFrame,
-                figureFrame: dockFrame,
+                figureFrame: offscreenFigureFrame(
+                    anchorFrame: rawAnchorFrame,
+                    paneBounds: paneBounds
+                ),
                 bubbleFrame: nil,
                 bubblePlacement: nil,
                 tailTip: nil
@@ -910,6 +941,43 @@ struct ReaderElfOverlayLayout: Equatable {
         return clampedFrame.standardized
     }
 
+    private static func offscreenFigureFrame(
+        anchorFrame: CGRect,
+        paneBounds: CGRect
+    ) -> CGRect {
+        let centeredFrame = CGRect(
+            x: anchorFrame.midX - (figureSize.width * 0.5),
+            y: anchorFrame.midY - (figureSize.height * 0.55),
+            width: figureSize.width,
+            height: figureSize.height
+        ).standardized
+
+        let targetX: CGFloat
+        if centeredFrame.maxX < paneBounds.minX {
+            targetX = paneBounds.minX - figureSize.width - offscreenTravelMargin
+        } else if centeredFrame.minX > paneBounds.maxX {
+            targetX = paneBounds.maxX + offscreenTravelMargin
+        } else {
+            targetX = centeredFrame.minX
+        }
+
+        let targetY: CGFloat
+        if centeredFrame.maxY < paneBounds.minY {
+            targetY = paneBounds.minY - figureSize.height - offscreenTravelMargin
+        } else if centeredFrame.minY > paneBounds.maxY {
+            targetY = paneBounds.maxY + offscreenTravelMargin
+        } else {
+            targetY = centeredFrame.minY
+        }
+
+        return CGRect(
+            x: targetX,
+            y: targetY,
+            width: figureSize.width,
+            height: figureSize.height
+        ).standardized
+    }
+
     private static func tailTip(
         for bubbleFrame: CGRect,
         placement: ReaderElfBubblePlacement,
@@ -970,6 +1038,18 @@ struct ReaderElfOverlayLayout: Equatable {
 
     private static func clamp(_ value: CGFloat, min minimum: CGFloat, max maximum: CGFloat) -> CGFloat {
         Swift.max(minimum, Swift.min(maximum, value))
+    }
+}
+
+private extension CGRect {
+    var standardizedIfRenderable: CGRect? {
+        let rect = standardized
+        guard rect.isNull == false,
+              rect.width > 0.01,
+              rect.height > 0.01 else {
+            return nil
+        }
+        return rect
     }
 }
 
