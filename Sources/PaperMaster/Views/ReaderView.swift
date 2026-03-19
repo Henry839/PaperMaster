@@ -170,6 +170,7 @@ struct ReaderView: View {
                 .padding(18)
             }
             .background(Color(nsColor: .controlBackgroundColor))
+            .textSelection(.enabled)
             .onChange(of: sidebarRevealCommand) { _, newCommand in
                 guard let newCommand else { return }
                 withAnimation(.snappy(duration: 0.22)) {
@@ -642,6 +643,12 @@ struct ReaderView: View {
                 Text("General paper notes")
                     .font(.caption)
                     .foregroundStyle(.secondary)
+                if focusedField != .scratchpad {
+                    Button("Edit") {
+                        focusedField = .scratchpad
+                    }
+                    .buttonStyle(.borderless)
+                }
             }
 
             scratchpadContent
@@ -694,12 +701,6 @@ struct ReaderView: View {
                     RoundedRectangle(cornerRadius: 14, style: .continuous)
                         .stroke(Color.primary.opacity(0.05), lineWidth: 1)
                 )
-                .contentShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-                .onTapGesture {
-                    DispatchQueue.main.async {
-                        focusedField = .annotation(annotation.id)
-                    }
-                }
         }
     }
 
@@ -738,12 +739,6 @@ struct ReaderView: View {
                     RoundedRectangle(cornerRadius: 16, style: .continuous)
                         .stroke(Color.primary.opacity(0.06), lineWidth: 1)
                 )
-                .contentShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-                .onTapGesture {
-                    DispatchQueue.main.async {
-                        focusedField = .scratchpad
-                    }
-                }
         }
     }
 

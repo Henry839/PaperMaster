@@ -29,6 +29,7 @@ struct PaperDetailView: View {
             }
             .padding(24)
         }
+        .textSelection(.enabled)
         .background(
             LinearGradient(
                 colors: [Color.orange.opacity(0.08), Color.clear],

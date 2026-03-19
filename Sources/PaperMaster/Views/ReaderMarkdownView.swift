@@ -10,6 +10,7 @@ struct ReaderMarkdownView: View {
     var body: some View {
         ReaderMarkdownBlocksView(blocks: document.blocks)
             .frame(maxWidth: .infinity, alignment: .leading)
+            .textSelection(.enabled)
     }
 }
 
