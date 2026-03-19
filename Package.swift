@@ -13,9 +13,15 @@ let package = Package(
             targets: ["PaperMaster"]
         )
     ],
+    dependencies: [
+        .package(url: "https://github.com/migueldeicaza/SwiftTerm.git", branch: "main")
+    ],
     targets: [
         .executableTarget(
             name: "PaperMaster",
+            dependencies: [
+                "SwiftTerm"
+            ],
             path: "Sources/PaperMaster"
         ),
         .testTarget(

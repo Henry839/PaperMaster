@@ -6,6 +6,7 @@ struct PaperMasterApp: App {
     static let mainWindowID = "main"
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @State private var services: AppServices
+    @State private var agentRuntime = AgentRuntimeService()
     @State private var router = AppRouter()
     private let modelContainer: ModelContainer
 
@@ -25,6 +26,7 @@ struct PaperMasterApp: App {
             MainWindowRootView(
                 appDelegate: appDelegate,
                 services: services,
+                agentRuntime: agentRuntime,
                 router: router
             )
         })
@@ -38,11 +40,13 @@ private struct MainWindowRootView: View {
 
     let appDelegate: AppDelegate
     let services: AppServices
+    let agentRuntime: AgentRuntimeService
     let router: AppRouter
 
     var body: some View {
         AppRootView()
             .environment(services)
+            .environment(agentRuntime)
             .environment(router)
             .onAppear {
                 appDelegate.router = router

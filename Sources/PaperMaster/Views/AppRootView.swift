@@ -11,6 +11,7 @@ private let queueDragAnimation = Animation.interactiveSpring(
 struct AppRootView: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(AppServices.self) private var services
+    @Environment(AgentRuntimeService.self) private var agentRuntime
     @Environment(AppRouter.self) private var router
 
     @Query(sort: \Paper.dateAdded, order: .reverse) private var papers: [Paper]
@@ -35,7 +36,11 @@ struct AppRootView: View {
     private var feedbackSnapshot: FeedbackSnapshot {
         FeedbackSnapshot(
             screen: router.selectedScreen,
-            selectedPaper: (router.selectedScreen == AppScreen.settings || router.selectedScreen == AppScreen.fusionReactor || router.selectedScreen == AppScreen.hot) ? nil : selectedPaper
+            selectedPaper: (
+                router.selectedScreen == AppScreen.settings ||
+                router.selectedScreen == AppScreen.fusionReactor ||
+                router.selectedScreen == AppScreen.hot
+            ) ? nil : selectedPaper
         )
     }
 
@@ -188,6 +193,12 @@ struct AppRootView: View {
             .overlay {
                 importDropOverlay
             }
+            .safeAreaInset(edge: .bottom, spacing: 0) {
+                if agentRuntime.isPanelVisible {
+                    IntegratedTerminalPanel()
+                        .transition(.move(edge: .bottom).combined(with: .opacity))
+                }
+            }
             .onDrop(of: [UTType.fileURL], isTargeted: $isImportDropTargeted, perform: handleImportedFiles)
             .animation(.snappy(duration: 0.22), value: services.presentedNotice?.id)
     }
@@ -323,6 +334,17 @@ struct AppRootView: View {
         ToolbarItemGroup(placement: .primaryAction) {
             Button("Feedback", systemImage: "square.and.pencil") {
                 router.isFeedbackSheetPresented = true
+            }
+
+            Button("Terminal", systemImage: "terminal") {
+                if agentRuntime.isPanelVisible {
+                    agentRuntime.isPanelVisible = false
+                } else {
+                    agentRuntime.isPanelVisible = true
+                    if agentRuntime.embeddedSessions.isEmpty {
+                        _ = agentRuntime.createEmbeddedSession()
+                    }
+                }
             }
 
             Button("Add Paper", systemImage: "plus") {
