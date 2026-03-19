@@ -7,7 +7,8 @@ EXECUTABLE_NAME="PaperMaster"
 ICON_NAME="PaperMaster"
 SOURCE_BINARY_NAME="PaperMaster"
 CONFIGURATION="${1:-release}"
-BUILD_DIR="$ROOT_DIR/.build"
+SCRATCH_HASH="$(printf '%s' "$ROOT_DIR" | cksum | awk '{print $1}')"
+BUILD_DIR="${PAPERMASTER_BUILD_DIR:-/tmp/papermaster-build-${SCRATCH_HASH}}"
 APP_DIR="$ROOT_DIR/dist/${APP_BUNDLE_NAME}.app"
 CONTENTS_DIR="$APP_DIR/Contents"
 MACOS_DIR="$CONTENTS_DIR/MacOS"
@@ -28,7 +29,7 @@ cd "$ROOT_DIR"
 "$ROOT_DIR/Scripts/generate-icon.sh"
 
 mkdir -p /tmp/swift-module-cache /tmp/clang-module-cache
-"$ROOT_DIR/Scripts/swift-overlay.sh" build -c "$CONFIGURATION"
+"$ROOT_DIR/Scripts/swift-overlay.sh" build --scratch-path "$BUILD_DIR" -c "$CONFIGURATION"
 
 BINARY_PATH="$BUILD_DIR/arm64-apple-macosx/$CONFIGURATION/$SOURCE_BINARY_NAME"
 if [[ ! -x "$BINARY_PATH" ]]; then

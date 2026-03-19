@@ -35,7 +35,7 @@ struct AppRootView: View {
     private var feedbackSnapshot: FeedbackSnapshot {
         FeedbackSnapshot(
             screen: router.selectedScreen,
-            selectedPaper: (router.selectedScreen == AppScreen.settings || router.selectedScreen == AppScreen.fusionReactor) ? nil : selectedPaper
+            selectedPaper: (router.selectedScreen == AppScreen.settings || router.selectedScreen == AppScreen.fusionReactor || router.selectedScreen == AppScreen.hot) ? nil : selectedPaper
         )
     }
 
@@ -85,6 +85,8 @@ struct AppRootView: View {
                 }
                 .filter { $0.matchesSearch(librarySearch) }
                 .sorted { $0.dateAdded > $1.dateAdded }
+        case .hot:
+            return []
         case .fusionReactor:
             return []
         case .settings:
@@ -236,6 +238,16 @@ struct AppRootView: View {
                 ProgressView()
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
+        } else if router.selectedScreen == AppScreen.hot {
+            if let settings {
+                HotPaperDiscoveryView(
+                    papers: papers,
+                    settings: settings
+                )
+            } else {
+                ProgressView()
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
         } else if router.selectedScreen == AppScreen.fusionReactor {
             if let settings {
                 PaperFusionReactorView(
@@ -256,6 +268,8 @@ struct AppRootView: View {
     private var detailColumn: some View {
         if router.selectedScreen == AppScreen.settings {
             settingsDetailPlaceholder
+        } else if router.selectedScreen == AppScreen.hot {
+            hotPapersDetailPlaceholder
         } else if router.selectedScreen == AppScreen.fusionReactor {
             if let settings {
                 PaperFusionResultView(
@@ -491,6 +505,14 @@ struct AppRootView: View {
         )
     }
 
+    private var hotPapersDetailPlaceholder: some View {
+        ContentUnavailableView(
+            "Spot promising work",
+            systemImage: "sparkles.rectangle.stack",
+            description: Text("Refresh a category, skim the summaries, and import anything worth tracking into your library.")
+        )
+    }
+
     private func queueReplanBanner(settings: UserSettings) -> some View {
         HStack(alignment: .center, spacing: 14) {
             VStack(alignment: .leading, spacing: 4) {
@@ -554,6 +576,8 @@ struct AppRootView: View {
             return "Queue ordered by reading priority and spread across upcoming days."
         case .library:
             return "Browse every active paper, including completed reads and drafts."
+        case .hot:
+            return ""
         case .fusionReactor:
             return ""
         case .settings:
@@ -571,6 +595,8 @@ struct AppRootView: View {
             "Queue is empty"
         case .library:
             "No matching papers"
+        case .hot:
+            ""
         case .fusionReactor:
             ""
         case .settings:
@@ -588,6 +614,8 @@ struct AppRootView: View {
             "list.bullet.rectangle"
         case .library:
             "magnifyingglass"
+        case .hot:
+            "sparkles.rectangle.stack"
         case .fusionReactor:
             "flame"
         case .settings:
@@ -605,6 +633,8 @@ struct AppRootView: View {
             "Import a paper and schedule it to start building your reading plan."
         case .library:
             "Try a different search query or filter."
+        case .hot:
+            ""
         case .fusionReactor:
             ""
         case .settings:
@@ -622,6 +652,8 @@ struct AppRootView: View {
             papers.filter { $0.status.isActiveQueue }.count
         case .library:
             papers.filter { $0.status != .archived }.count
+        case .hot:
+            0
         case .fusionReactor:
             0
         case .settings:
@@ -638,7 +670,7 @@ struct AppRootView: View {
                     .lineLimit(1)
                     .truncationMode(.tail)
                 Spacer()
-                if screen != AppScreen.settings && screen != AppScreen.fusionReactor {
+                if screen != AppScreen.settings && screen != AppScreen.fusionReactor && screen != AppScreen.hot {
                     Text(countForScreen(screen).formatted())
                         .font(.caption)
                         .foregroundStyle(.secondary)
@@ -660,7 +692,8 @@ struct AppRootView: View {
 
     private func syncSelectionIfNeeded(forceFirst: Bool = false) {
         guard router.selectedScreen != AppScreen.settings,
-              router.selectedScreen != AppScreen.fusionReactor else {
+              router.selectedScreen != AppScreen.fusionReactor,
+              router.selectedScreen != AppScreen.hot else {
             router.selectedPaperID = nil
             return
         }

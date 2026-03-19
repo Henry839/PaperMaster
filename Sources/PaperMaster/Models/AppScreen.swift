@@ -5,6 +5,7 @@ enum AppScreen: String, CaseIterable, Identifiable {
     case inbox
     case queue
     case library
+    case hot
     case fusionReactor
     case settings
 
@@ -20,6 +21,8 @@ enum AppScreen: String, CaseIterable, Identifiable {
             "Queue"
         case .library:
             "Library"
+        case .hot:
+            "Hot Papers"
         case .fusionReactor:
             "Paper Fusion Reactor"
         case .settings:
@@ -29,6 +32,8 @@ enum AppScreen: String, CaseIterable, Identifiable {
 
     var sidebarTitle: String {
         switch self {
+        case .hot:
+            "Hot"
         case .fusionReactor:
             "Fusion Reactor"
         default:
@@ -46,6 +51,8 @@ enum AppScreen: String, CaseIterable, Identifiable {
             "list.number"
         case .library:
             "books.vertical"
+        case .hot:
+            "sparkles.rectangle.stack"
         case .fusionReactor:
             "flame"
         case .settings:
