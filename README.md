@@ -170,7 +170,7 @@ Import this paper into PaperMaster: https://arxiv.org/abs/2505.13308
 Or invoke the skill explicitly:
 
 ```text
-Use papermaster-agent-ops to import this paper into PaperMaster: /Users/you/Downloads/paper.pdf
+Use papermaster-agent-ops to import this paper into PaperMaster: /path/to/your/paper.pdf
 ```
 
 In the fast path, Codex should download or copy the PDF into `PAPERMASTER_AGENT_IMPORT_DIR`; PaperMaster then ingests it automatically.
