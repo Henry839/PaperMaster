@@ -243,7 +243,8 @@ struct ReaderElfSessionState: Equatable {
     func canEvaluate(_ passage: ReaderFocusPassageSnapshot, now: Date = .now) -> Bool {
         guard enabled,
               pausedReason == nil,
-              isThinking == false else {
+              isThinking == false,
+              activeComment == nil else {
             return false
         }
 
@@ -322,6 +323,13 @@ enum ReaderElfPresentationTargetResolution: Equatable {
     case idle
     case awaitingGeometry(expectedPassageKey: String)
     case ready
+}
+
+enum ReaderElfPresentationGeometryUpdate: Equatable {
+    case none
+    case resolve(ReaderElfGeometrySnapshot)
+    case refresh(ReaderElfGeometrySnapshot)
+    case returnToDock
 }
 
 enum ReaderElfBubblePlacement: String, Equatable {
@@ -456,6 +464,7 @@ struct ReaderElfPresentationState: Equatable {
     static let returnDuration: TimeInterval = 0.28
     static let visiblePresentationDuration = landingDuration + lingerDuration
     static let geometryResolutionTimeout: TimeInterval = 0.75
+    static let geometryResolutionMaximumWait: TimeInterval = 3.0
 
     var comment: ReaderElfComment?
     var landingGeometry: ReaderElfGeometrySnapshot?
@@ -517,6 +526,33 @@ struct ReaderElfPresentationState: Equatable {
         token = comment.id
     }
 
+    func geometryUpdate(for overlayGeometry: ReaderElfGeometrySnapshot?) -> ReaderElfPresentationGeometryUpdate {
+        guard let expectedPassageKey else {
+            return .none
+        }
+
+        switch targetResolution {
+        case .idle:
+            return .none
+        case .awaitingGeometry:
+            guard let overlayGeometry,
+                  overlayGeometry.matchesPresentationTarget(expectedPassageKey: expectedPassageKey) else {
+                return .none
+            }
+            return .resolve(overlayGeometry)
+        case .ready:
+            if let overlayGeometry,
+               overlayGeometry.matchesPresentationTarget(expectedPassageKey: expectedPassageKey) {
+                return .refresh(overlayGeometry)
+            }
+
+            if phase == .jumpingIn || phase == .presenting {
+                return .returnToDock
+            }
+            return .none
+        }
+    }
+
     mutating func resolveGeometry(_ geometry: ReaderElfGeometrySnapshot, commentID: UUID, at: Date = .now) {
         guard token == commentID,
               comment?.id == commentID,
@@ -559,6 +595,28 @@ struct ReaderElfPresentationState: Equatable {
     mutating func dock(commentID: UUID? = nil, at: Date = .now) {
         guard commentID == nil || token == commentID else { return }
         self = ReaderElfPresentationState(phase: .docked, targetResolution: .idle, phaseStartedAt: at)
+    }
+
+    static func geometryResolutionWaitInterval(
+        startedAt: Date,
+        lastViewportActivityAt: Date?,
+        now: Date = .now
+    ) -> TimeInterval? {
+        let effectiveViewportActivityAt: Date
+        if let lastViewportActivityAt, lastViewportActivityAt > startedAt {
+            effectiveViewportActivityAt = lastViewportActivityAt
+        } else {
+            effectiveViewportActivityAt = startedAt
+        }
+
+        let idleDeadline = effectiveViewportActivityAt.addingTimeInterval(geometryResolutionTimeout)
+        let maximumDeadline = startedAt.addingTimeInterval(geometryResolutionMaximumWait)
+        let nextDeadline = min(idleDeadline, maximumDeadline)
+        let remainingInterval = nextDeadline.timeIntervalSince(now)
+        guard remainingInterval > 0 else {
+            return nil
+        }
+        return remainingInterval
     }
 }
 

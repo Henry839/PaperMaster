@@ -53,6 +53,25 @@ final class ReaderCompanionTests: XCTestCase {
         XCTAssertEqual(session.status(now: createdAt.addingTimeInterval(46)), .listening)
     }
 
+    func testSessionDoesNotEvaluateWhileActiveCommentIsUntappedEvenAfterCooldownExpires() throws {
+        var session = ReaderElfSessionState()
+        let activeComment = ReaderElfComment(
+            passage: try passage(pageIndex: 0, text: "An underpowered baseline"),
+            mood: .skeptical,
+            text: "This comparison still feels soft.",
+            createdAt: Date(timeIntervalSince1970: 100)
+        )
+        let nextPassage = try passage(pageIndex: 0, text: "A different paragraph")
+
+        session.surface(activeComment, cooldown: 45)
+
+        XCTAssertFalse(session.canEvaluate(nextPassage, now: Date(timeIntervalSince1970: 200)))
+
+        session.dismissActiveComment()
+
+        XCTAssertTrue(session.canEvaluate(nextPassage, now: Date(timeIntervalSince1970: 200)))
+    }
+
     func testClusteredLinesStopAtLargeParagraphGap() {
         let lines = [
             line(text: "First line", x: 40, y: 680, width: 260, height: 14),
@@ -566,6 +585,77 @@ final class ReaderCompanionTests: XCTestCase {
         XCTAssertEqual(presentation.geometry?.passageKey, comment.passage.normalizedKey)
     }
 
+    func testPresentationGeometryUpdateWaitsForMatchedGeometry() throws {
+        let comment = try comment(text: "This section still jumps past the control that matters.")
+        let mismatchedGeometry = geometry(
+            passageKey: "other-passage",
+            paneBounds: CGRect(x: 0, y: 0, width: 920, height: 720),
+            pageFrame: CGRect(x: 160, y: 48, width: 520, height: 620),
+            anchorFrame: CGRect(x: 312, y: 286, width: 160, height: 42),
+            passageLineFrames: [CGRect(x: 312, y: 286, width: 160, height: 18)]
+        )
+        let matchedGeometry = geometry(
+            passageKey: comment.passage.normalizedKey,
+            paneBounds: CGRect(x: 0, y: 0, width: 920, height: 720),
+            pageFrame: CGRect(x: 160, y: 48, width: 520, height: 620),
+            anchorFrame: CGRect(x: 312, y: 286, width: 160, height: 42),
+            passageLineFrames: [CGRect(x: 312, y: 286, width: 160, height: 18)]
+        )
+        var presentation = ReaderElfPresentationState()
+
+        presentation.start(comment: comment, at: Date(timeIntervalSince1970: 20))
+
+        XCTAssertEqual(presentation.geometryUpdate(for: mismatchedGeometry), .none)
+        XCTAssertEqual(presentation.geometryUpdate(for: matchedGeometry), .resolve(matchedGeometry))
+    }
+
+    func testPresentationGeometryUpdateAllowsOffscreenMatchedGeometry() throws {
+        let comment = try comment(text: "This section still jumps past the control that matters.")
+        let offscreenMatchedGeometry = geometry(
+            passageKey: comment.passage.normalizedKey,
+            paneBounds: CGRect(x: 0, y: 0, width: 920, height: 720),
+            pageFrame: CGRect(x: 160, y: 780, width: 520, height: 620),
+            anchorFrame: CGRect(x: 312, y: 812, width: 160, height: 42),
+            passageLineFrames: [CGRect(x: 312, y: 812, width: 160, height: 18)]
+        )
+        var presentation = ReaderElfPresentationState()
+
+        presentation.start(comment: comment, at: Date(timeIntervalSince1970: 20))
+
+        XCTAssertEqual(presentation.geometryUpdate(for: offscreenMatchedGeometry), .resolve(offscreenMatchedGeometry))
+    }
+
+    func testPresentationGeometryUpdateRequestsReturnWhenReadyPresentationLosesTargetMatch() throws {
+        let comment = try comment(text: "The justification still does not reach the stated claim.")
+        let readyGeometry = geometry(
+            passageKey: comment.passage.normalizedKey,
+            paneBounds: CGRect(x: 0, y: 0, width: 920, height: 720),
+            pageFrame: CGRect(x: 160, y: 48, width: 520, height: 620),
+            anchorFrame: CGRect(x: 312, y: 286, width: 160, height: 42),
+            passageLineFrames: [CGRect(x: 312, y: 286, width: 160, height: 18)]
+        )
+        var presentation = ReaderElfPresentationState()
+
+        presentation.start(comment: comment, at: Date(timeIntervalSince1970: 30))
+        presentation.resolveGeometry(readyGeometry, commentID: comment.id, at: Date(timeIntervalSince1970: 31))
+        presentation.beginPresenting(commentID: comment.id, at: Date(timeIntervalSince1970: 32))
+
+        XCTAssertEqual(presentation.geometryUpdate(for: nil), .returnToDock)
+        XCTAssertEqual(
+            presentation.geometryUpdate(
+                for: geometry(
+                    passageKey: "other-passage",
+                    paneBounds: readyGeometry.paneBounds,
+                    pageFrame: readyGeometry.pageFrame,
+                    anchorFrame: readyGeometry.anchorFrame,
+                    passageLineFrames: readyGeometry.passageLineFrames
+                )
+            ),
+            .returnToDock
+        )
+        XCTAssertEqual(presentation.geometryUpdate(for: readyGeometry), .refresh(readyGeometry))
+    }
+
     func testGeometryReadinessSucceedsForPartiallyVisibleMatchedPassage() throws {
         let geometry = geometry(
             passageKey: "target",
@@ -634,6 +724,61 @@ final class ReaderCompanionTests: XCTestCase {
 
     func testGeometryResolutionTimeoutGivesRealPDFJumpsMoreTimeToSettle() {
         XCTAssertEqual(ReaderElfPresentationState.geometryResolutionTimeout, 0.75, accuracy: 0.001)
+        XCTAssertEqual(ReaderElfPresentationState.geometryResolutionMaximumWait, 3.0, accuracy: 0.001)
+    }
+
+    func testGeometryResolutionWaitIntervalUsesIdleTimeoutWithoutViewportMovement() {
+        let startedAt = Date(timeIntervalSince1970: 50)
+        let now = Date(timeIntervalSince1970: 50.2)
+
+        let waitInterval = ReaderElfPresentationState.geometryResolutionWaitInterval(
+            startedAt: startedAt,
+            lastViewportActivityAt: nil,
+            now: now
+        )
+
+        XCTAssertEqual(try XCTUnwrap(waitInterval), 0.55, accuracy: 0.001)
+    }
+
+    func testGeometryResolutionWaitIntervalExtendsAfterRecentViewportMovement() {
+        let startedAt = Date(timeIntervalSince1970: 100)
+        let lastViewportActivityAt = Date(timeIntervalSince1970: 100.65)
+        let now = Date(timeIntervalSince1970: 100.7)
+
+        let waitInterval = ReaderElfPresentationState.geometryResolutionWaitInterval(
+            startedAt: startedAt,
+            lastViewportActivityAt: lastViewportActivityAt,
+            now: now
+        )
+
+        XCTAssertEqual(try XCTUnwrap(waitInterval), 0.7, accuracy: 0.001)
+    }
+
+    func testGeometryResolutionWaitIntervalStopsAtMaximumWaitEvenWithViewportMovement() {
+        let startedAt = Date(timeIntervalSince1970: 200)
+        let lastViewportActivityAt = Date(timeIntervalSince1970: 202.9)
+        let now = Date(timeIntervalSince1970: 202.95)
+
+        let waitInterval = ReaderElfPresentationState.geometryResolutionWaitInterval(
+            startedAt: startedAt,
+            lastViewportActivityAt: lastViewportActivityAt,
+            now: now
+        )
+
+        XCTAssertEqual(try XCTUnwrap(waitInterval), 0.05, accuracy: 0.001)
+    }
+
+    func testGeometryResolutionWaitIntervalExpiresAfterMaximumWait() {
+        let startedAt = Date(timeIntervalSince1970: 300)
+        let now = Date(timeIntervalSince1970: 303.01)
+
+        XCTAssertNil(
+            ReaderElfPresentationState.geometryResolutionWaitInterval(
+                startedAt: startedAt,
+                lastViewportActivityAt: Date(timeIntervalSince1970: 302.8),
+                now: now
+            )
+        )
     }
 
     func testBubbleStyleUsesTintedReadableTextDistinctFromPDFBlack() {

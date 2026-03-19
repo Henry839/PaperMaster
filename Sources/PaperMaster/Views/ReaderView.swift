@@ -17,16 +17,19 @@ struct ReaderView: View {
     @State private var selectionState: ReaderPDFSelectionState = .none
     @State private var focusPassage: ReaderFocusPassageSnapshot?
     @State private var elfOverlayGeometry: ReaderElfGeometrySnapshot?
+    @State private var elfOverlayViewportActivityAt: Date?
     @State private var isSidebarVisible = true
     @State private var expandedAnnotationID: UUID?
     @State private var pdfCommand: ReaderPDFCommand?
     @State private var askAISession = ReaderAskAISessionState()
     @State private var elfSession = ReaderElfSessionState()
     @State private var elfPresentation = ReaderElfPresentationState()
+    @State private var elfOverlayCaptureToken = UUID()
     @State private var cachedDocumentContext: ReaderAskAIDocumentContext?
     @State private var askAITask: Task<Void, Never>?
     @State private var elfScheduleTask: Task<Void, Never>?
     @State private var elfTask: Task<Void, Never>?
+    @State private var elfCaptureTask: Task<Void, Never>?
     @State private var elfResolveTask: Task<Void, Never>?
     @State private var elfPhaseTask: Task<Void, Never>?
     @State private var elfDismissTask: Task<Void, Never>?
@@ -132,7 +135,9 @@ struct ReaderView: View {
                 selectionState: $selectionState,
                 focusPassage: $focusPassage,
                 overlayTargetPassage: elfOverlayTargetPassage,
+                overlayCaptureToken: elfOverlayCaptureToken,
                 overlayGeometry: $elfOverlayGeometry,
+                overlayViewportActivityAt: $elfOverlayViewportActivityAt,
                 underlinePresentation: elfUnderlinePresentation,
                 command: pdfCommand,
                 onAnnotationDoubleClick: revealAnnotation
@@ -948,49 +953,87 @@ struct ReaderView: View {
     }
 
     private func surfaceElfComment(_ comment: ReaderElfComment) {
+        elfCaptureTask?.cancel()
         elfResolveTask?.cancel()
         elfPhaseTask?.cancel()
         elfDismissTask?.cancel()
 
         elfPresentation.start(comment: comment)
+        elfOverlayCaptureToken = UUID()
+        scheduleElfOverlayRecapture(for: comment)
         scheduleElfGeometryResolutionTimeout(for: comment)
         resolveElfPresentationIfNeeded()
     }
 
     private func resolveElfPresentationIfNeeded() {
         guard let comment = elfPresentation.comment else { return }
-        let matchedGeometry = elfOverlayGeometry.flatMap { geometry in
-            geometry.matchesPresentationTarget(expectedPassageKey: comment.passage.normalizedKey) ? geometry : nil
-        }
 
-        switch elfPresentation.targetResolution {
-        case .idle:
+        switch elfPresentation.geometryUpdate(for: elfOverlayGeometry) {
+        case .none:
             return
-        case .awaitingGeometry:
-            guard let matchedGeometry else {
-                return
-            }
-
+        case let .resolve(geometry):
+            elfCaptureTask?.cancel()
+            elfCaptureTask = nil
             elfResolveTask?.cancel()
             elfResolveTask = nil
-            elfPresentation.resolveGeometry(matchedGeometry, commentID: comment.id)
+            elfPresentation.resolveGeometry(geometry, commentID: comment.id)
             scheduleElfPresentation(for: comment)
-        case .ready:
-            if let matchedGeometry {
-                elfPresentation.refreshLiveGeometry(matchedGeometry, commentID: comment.id)
+        case let .refresh(geometry):
+            elfPresentation.refreshLiveGeometry(geometry, commentID: comment.id)
+        case .returnToDock:
+            elfCaptureTask?.cancel()
+            elfCaptureTask = nil
+            beginElfReturn(for: comment)
+        }
+    }
+
+    private func scheduleElfOverlayRecapture(for comment: ReaderElfComment) {
+        let recaptureIntervals: [UInt64] = [
+            80_000_000,
+            80_000_000,
+            100_000_000,
+            120_000_000,
+            140_000_000,
+            160_000_000
+        ]
+
+        elfCaptureTask = Task { @MainActor in
+            for interval in recaptureIntervals {
+                try? await Task.sleep(nanoseconds: interval)
+                guard Task.isCancelled == false else { return }
+                guard elfPresentation.token == comment.id else { return }
+                guard case .awaitingGeometry = elfPresentation.targetResolution else { return }
+
+                elfOverlayCaptureToken = UUID()
             }
+
+            elfCaptureTask = nil
         }
     }
 
     private func scheduleElfGeometryResolutionTimeout(for comment: ReaderElfComment) {
         elfResolveTask?.cancel()
+        let startedAt = Date.now
         elfResolveTask = Task { @MainActor in
-            try? await Task.sleep(
-                nanoseconds: UInt64(ReaderElfPresentationState.geometryResolutionTimeout * 1_000_000_000)
-            )
+            while let waitInterval = ReaderElfPresentationState.geometryResolutionWaitInterval(
+                startedAt: startedAt,
+                lastViewportActivityAt: elfOverlayViewportActivityAt
+            ) {
+                try? await Task.sleep(nanoseconds: UInt64(waitInterval * 1_000_000_000))
+                guard Task.isCancelled == false else { return }
+                guard elfPresentation.token == comment.id else { return }
+                guard case .awaitingGeometry = elfPresentation.targetResolution else {
+                    elfResolveTask = nil
+                    return
+                }
+            }
+
             guard Task.isCancelled == false else { return }
             guard elfPresentation.token == comment.id else { return }
-            guard case .awaitingGeometry = elfPresentation.targetResolution else { return }
+            guard case .awaitingGeometry = elfPresentation.targetResolution else {
+                elfResolveTask = nil
+                return
+            }
 
             elfSession.dismissActiveComment()
             elfPresentation.dock(commentID: comment.id)
@@ -1039,11 +1082,13 @@ struct ReaderView: View {
     private func cancelElfWork(clearBubble: Bool) {
         elfScheduleTask?.cancel()
         elfTask?.cancel()
+        elfCaptureTask?.cancel()
         elfResolveTask?.cancel()
         elfPhaseTask?.cancel()
         elfDismissTask?.cancel()
         elfScheduleTask = nil
         elfTask = nil
+        elfCaptureTask = nil
         elfResolveTask = nil
         elfPhaseTask = nil
         elfDismissTask = nil
@@ -1393,7 +1438,9 @@ private struct ReaderPDFView: NSViewRepresentable {
     @Binding var selectionState: ReaderPDFSelectionState
     @Binding var focusPassage: ReaderFocusPassageSnapshot?
     let overlayTargetPassage: ReaderFocusPassageSnapshot?
+    let overlayCaptureToken: UUID
     @Binding var overlayGeometry: ReaderElfGeometrySnapshot?
+    @Binding var overlayViewportActivityAt: Date?
     let underlinePresentation: ReaderElfUnderlinePresentationState?
     let command: ReaderPDFCommand?
     let onAnnotationDoubleClick: (UUID) -> Void
@@ -1403,7 +1450,9 @@ private struct ReaderPDFView: NSViewRepresentable {
             selectionBinding: $selectionState,
             focusPassageBinding: $focusPassage,
             overlayGeometryBinding: $overlayGeometry,
+            overlayViewportActivityBinding: $overlayViewportActivityAt,
             overlayTargetPassage: overlayTargetPassage,
+            overlayCaptureToken: overlayCaptureToken,
             underlinePresentation: underlinePresentation,
             onAnnotationDoubleClick: onAnnotationDoubleClick
         )
@@ -1427,10 +1476,13 @@ private struct ReaderPDFView: NSViewRepresentable {
     }
 
     func updateNSView(_ nsView: InteractivePDFView, context: Context) {
+        context.coordinator.configure(pdfView: nsView)
         context.coordinator.selectionBinding = $selectionState
         context.coordinator.focusPassageBinding = $focusPassage
         context.coordinator.overlayGeometryBinding = $overlayGeometry
+        context.coordinator.overlayViewportActivityBinding = $overlayViewportActivityAt
         context.coordinator.overlayTargetPassage = overlayTargetPassage
+        context.coordinator.overlayCaptureToken = overlayCaptureToken
         context.coordinator.underlinePresentation = underlinePresentation
         context.coordinator.onAnnotationDoubleClick = onAnnotationDoubleClick
         nsView.annotationDoubleClickHandler = { annotationID in
@@ -1477,26 +1529,34 @@ private struct ReaderPDFView: NSViewRepresentable {
         var selectionBinding: Binding<ReaderPDFSelectionState>
         var focusPassageBinding: Binding<ReaderFocusPassageSnapshot?>
         var overlayGeometryBinding: Binding<ReaderElfGeometrySnapshot?>
+        var overlayViewportActivityBinding: Binding<Date?>
         var overlayTargetPassage: ReaderFocusPassageSnapshot?
+        var overlayCaptureToken: UUID
         var underlinePresentation: ReaderElfUnderlinePresentationState?
         var onAnnotationDoubleClick: (UUID) -> Void
         private weak var observedPDFView: PDFView?
+        private weak var observedViewportClipView: NSClipView?
         private var loadedURL: URL?
         private var handledCommandID: UUID?
+        private var lastOverlayViewportActivityAt: Date?
         private let underlineOverlayProvider = ReaderElfUnderlineOverlayProvider()
 
         init(
             selectionBinding: Binding<ReaderPDFSelectionState>,
             focusPassageBinding: Binding<ReaderFocusPassageSnapshot?>,
             overlayGeometryBinding: Binding<ReaderElfGeometrySnapshot?>,
+            overlayViewportActivityBinding: Binding<Date?>,
             overlayTargetPassage: ReaderFocusPassageSnapshot?,
+            overlayCaptureToken: UUID,
             underlinePresentation: ReaderElfUnderlinePresentationState?,
             onAnnotationDoubleClick: @escaping (UUID) -> Void
         ) {
             self.selectionBinding = selectionBinding
             self.focusPassageBinding = focusPassageBinding
             self.overlayGeometryBinding = overlayGeometryBinding
+            self.overlayViewportActivityBinding = overlayViewportActivityBinding
             self.overlayTargetPassage = overlayTargetPassage
+            self.overlayCaptureToken = overlayCaptureToken
             self.underlinePresentation = underlinePresentation
             self.onAnnotationDoubleClick = onAnnotationDoubleClick
         }
@@ -1506,22 +1566,25 @@ private struct ReaderPDFView: NSViewRepresentable {
         }
 
         func configure(pdfView: PDFView) {
-            guard observedPDFView !== pdfView else { return }
-            NotificationCenter.default.removeObserver(self)
-            observedPDFView = pdfView
-            pdfView.pageOverlayViewProvider = underlineOverlayProvider
-            NotificationCenter.default.addObserver(
-                self,
-                selector: #selector(handleSelectionChanged(_:)),
-                name: Notification.Name.PDFViewSelectionChanged,
-                object: pdfView
-            )
-            NotificationCenter.default.addObserver(
-                self,
-                selector: #selector(handleVisiblePagesChanged(_:)),
-                name: Notification.Name.PDFViewVisiblePagesChanged,
-                object: pdfView
-            )
+            if observedPDFView !== pdfView {
+                NotificationCenter.default.removeObserver(self)
+                observedPDFView = pdfView
+                pdfView.pageOverlayViewProvider = underlineOverlayProvider
+                NotificationCenter.default.addObserver(
+                    self,
+                    selector: #selector(handleSelectionChanged(_:)),
+                    name: Notification.Name.PDFViewSelectionChanged,
+                    object: pdfView
+                )
+                NotificationCenter.default.addObserver(
+                    self,
+                    selector: #selector(handleVisiblePagesChanged(_:)),
+                    name: Notification.Name.PDFViewVisiblePagesChanged,
+                    object: pdfView
+                )
+            }
+
+            observeViewportClipViewIfNeeded(in: pdfView)
         }
 
         func loadDocumentIfNeeded(from url: URL, into pdfView: PDFView) {
@@ -1626,6 +1689,75 @@ private struct ReaderPDFView: NSViewRepresentable {
             updateUnderlinePresentation(in: pdfView)
         }
 
+        private func observeViewportClipViewIfNeeded(in pdfView: PDFView) {
+            let viewportClipView = pdfView.subviews
+                .compactMap { $0 as? NSScrollView }
+                .first?
+                .contentView
+
+            guard observedViewportClipView !== viewportClipView else {
+                return
+            }
+
+            if let observedViewportClipView {
+                NotificationCenter.default.removeObserver(
+                    self,
+                    name: NSView.boundsDidChangeNotification,
+                    object: observedViewportClipView
+                )
+                NotificationCenter.default.removeObserver(
+                    self,
+                    name: NSView.frameDidChangeNotification,
+                    object: observedViewportClipView
+                )
+            }
+
+            observedViewportClipView = viewportClipView
+
+            guard let viewportClipView else {
+                return
+            }
+
+            viewportClipView.postsBoundsChangedNotifications = true
+            viewportClipView.postsFrameChangedNotifications = true
+            NotificationCenter.default.addObserver(
+                self,
+                selector: #selector(handleViewportBoundsChanged(_:)),
+                name: NSView.boundsDidChangeNotification,
+                object: viewportClipView
+            )
+            NotificationCenter.default.addObserver(
+                self,
+                selector: #selector(handleViewportFrameChanged(_:)),
+                name: NSView.frameDidChangeNotification,
+                object: viewportClipView
+            )
+        }
+
+        private func recordOverlayViewportActivity(at date: Date = .now) {
+            if let lastOverlayViewportActivityAt,
+               date.timeIntervalSince(lastOverlayViewportActivityAt) < 0.05 {
+                return
+            }
+
+            lastOverlayViewportActivityAt = date
+            overlayViewportActivityBinding.wrappedValue = date
+        }
+
+        private func handleViewportChanged(in pdfView: PDFView) {
+            recordOverlayViewportActivity()
+
+            if case .single = selectionBinding.wrappedValue {
+                updateUnderlinePresentation(in: pdfView)
+                updateOverlayGeometry(in: pdfView)
+                return
+            }
+
+            focusPassageBinding.wrappedValue = ReaderFocusPassageExtractor.passage(in: pdfView)
+            updateUnderlinePresentation(in: pdfView)
+            updateOverlayGeometry(in: pdfView)
+        }
+
         private func selectionState(for pdfView: PDFView) -> ReaderPDFSelectionState {
             guard let selection = pdfView.currentSelection,
                   let document = pdfView.document else {
@@ -1687,15 +1819,27 @@ private struct ReaderPDFView: NSViewRepresentable {
                 return
             }
 
-            if case .single = selectionBinding.wrappedValue {
-                updateUnderlinePresentation(in: pdfView)
-                updateOverlayGeometry(in: pdfView)
+            handleViewportChanged(in: pdfView)
+        }
+
+        @objc
+        private func handleViewportBoundsChanged(_ notification: Notification) {
+            guard notification.object as? NSClipView === observedViewportClipView,
+                  let pdfView = observedPDFView else {
                 return
             }
 
-            focusPassageBinding.wrappedValue = ReaderFocusPassageExtractor.passage(in: pdfView)
-            updateUnderlinePresentation(in: pdfView)
-            updateOverlayGeometry(in: pdfView)
+            handleViewportChanged(in: pdfView)
+        }
+
+        @objc
+        private func handleViewportFrameChanged(_ notification: Notification) {
+            guard notification.object as? NSClipView === observedViewportClipView,
+                  let pdfView = observedPDFView else {
+                return
+            }
+
+            handleViewportChanged(in: pdfView)
         }
     }
 }
