@@ -107,7 +107,9 @@ final class AppServicesTests: XCTestCase {
         let container = try TestSupport.makeInMemoryContainer()
         let context = ModelContext(container)
         let storageDirectoryURL = try TestSupport.makeTemporaryDirectory()
+        let agentImportDirectoryURL = try TestSupport.makeTemporaryDirectory()
         defer { try? FileManager.default.removeItem(at: storageDirectoryURL) }
+        defer { try? FileManager.default.removeItem(at: agentImportDirectoryURL) }
 
         let incomingURL = storageDirectoryURL.appendingPathComponent("new-paper.pdf")
         try Data("pdf".utf8).write(to: incomingURL)
@@ -131,7 +133,8 @@ final class AppServicesTests: XCTestCase {
                 )
             ),
             paperStorageService: PaperStorageService(defaultStorageDirectoryURL: storageDirectoryURL),
-            reminderService: ReminderService(center: FakeNotificationCenter())
+            reminderService: ReminderService(center: FakeNotificationCenter()),
+            agentImportDirectoryURL: agentImportDirectoryURL
         )
 
         services.refreshStorageFolderMonitoring(context: context)
@@ -141,6 +144,50 @@ final class AppServicesTests: XCTestCase {
         XCTAssertEqual(papers.count, 1)
         XCTAssertEqual(papers.first?.title, "Scanned Paper")
         XCTAssertEqual(papers.first?.managedPDFLocalURL?.deletingLastPathComponent().path, storageDirectoryURL.path)
+    }
+
+    func testAgentImportInboxImportsPDFsAndCleansUpStagingFile() async throws {
+        let container = try TestSupport.makeInMemoryContainer()
+        let context = ModelContext(container)
+        let storageDirectoryURL = try TestSupport.makeTemporaryDirectory()
+        let agentImportDirectoryURL = try TestSupport.makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: storageDirectoryURL) }
+        defer { try? FileManager.default.removeItem(at: agentImportDirectoryURL) }
+
+        let incomingURL = agentImportDirectoryURL.appendingPathComponent("agent-paper.pdf")
+        try Data("pdf".utf8).write(to: incomingURL)
+
+        let settings = UserSettings(
+            paperStorageMode: .customLocal,
+            customPaperStoragePath: storageDirectoryURL.path
+        )
+        context.insert(settings)
+
+        let services = AppServices(
+            importService: PaperImportService(
+                metadataResolver: StubMetadataResolver(
+                    metadata: ResolvedPaperMetadata(
+                        title: "Agent Imported Paper",
+                        authors: ["Jane Doe"],
+                        abstractText: "Imported from the agent inbox.",
+                        sourceURL: incomingURL,
+                        pdfURL: incomingURL
+                    )
+                )
+            ),
+            paperStorageService: PaperStorageService(defaultStorageDirectoryURL: storageDirectoryURL),
+            reminderService: ReminderService(center: FakeNotificationCenter()),
+            agentImportDirectoryURL: agentImportDirectoryURL
+        )
+
+        services.refreshStorageFolderMonitoring(context: context)
+        try? await Task.sleep(nanoseconds: 300_000_000)
+
+        let papers = try context.fetch(FetchDescriptor<Paper>())
+        XCTAssertEqual(papers.count, 1)
+        XCTAssertEqual(papers.first?.title, "Agent Imported Paper")
+        XCTAssertEqual(papers.first?.managedPDFLocalURL?.deletingLastPathComponent().path, storageDirectoryURL.path)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: incomingURL.path))
     }
 
     func testSaveAnnotationCreatesAndDeduplicatesMatchingSelection() throws {

@@ -10,6 +10,7 @@ final class AgentRuntimeServiceTests: XCTestCase {
         XCTAssertEqual(paths.exportsDirectoryURL.lastPathComponent, "exports")
         XCTAssertEqual(paths.logsDirectoryURL.lastPathComponent, "logs")
         XCTAssertEqual(paths.attachmentsDirectoryURL.lastPathComponent, "attachments")
+        XCTAssertEqual(paths.skillsDirectoryURL.lastPathComponent, "skills")
     }
 
     func testSearchPapersMatchesLocalLibraryMetadata() {
@@ -43,5 +44,36 @@ final class AgentRuntimeServiceTests: XCTestCase {
         XCTAssertEqual(items.map(\.queuePosition), [0, 1])
         XCTAssertNotNil(items.first?.dueDate)
         XCTAssertNotNil(items.last?.dueDate)
+    }
+
+    @MainActor
+    func testBootstrapWorkspaceWritesAgentsAndSkillFiles() throws {
+        let rootDirectoryURL = try TestSupport.makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: rootDirectoryURL) }
+
+        let paths = AgentWorkspacePaths(
+            rootDirectoryURL: rootDirectoryURL,
+            sessionsDirectoryURL: rootDirectoryURL.appendingPathComponent("sessions", isDirectory: true),
+            exportsDirectoryURL: rootDirectoryURL.appendingPathComponent("exports", isDirectory: true),
+            logsDirectoryURL: rootDirectoryURL.appendingPathComponent("logs", isDirectory: true),
+            attachmentsDirectoryURL: rootDirectoryURL.appendingPathComponent("attachments", isDirectory: true),
+            skillsDirectoryURL: rootDirectoryURL.appendingPathComponent("skills", isDirectory: true)
+        )
+        let runtime = AgentRuntimeService(workspacePaths: paths)
+
+        runtime.bootstrapWorkspace()
+
+        XCTAssertNil(runtime.lastBootstrapErrorMessage)
+
+        let agentsURL = rootDirectoryURL.appendingPathComponent("AGENTS.md")
+        let skillURL = rootDirectoryURL
+            .appendingPathComponent("skills", isDirectory: true)
+            .appendingPathComponent("papermaster-agent-ops", isDirectory: true)
+            .appendingPathComponent("SKILL.md")
+
+        XCTAssertTrue(FileManager.default.fileExists(atPath: agentsURL.path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: skillURL.path))
+        XCTAssertTrue(try String(contentsOf: agentsURL, encoding: .utf8).contains("PAPERMASTER_AGENT_IMPORT_DIR"))
+        XCTAssertTrue(try String(contentsOf: skillURL, encoding: .utf8).contains("PaperMaster watches `PAPERMASTER_AGENT_IMPORT_DIR`"))
     }
 }

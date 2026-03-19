@@ -10,6 +10,7 @@ struct AgentWorkspacePaths: Equatable, Sendable {
     let exportsDirectoryURL: URL
     let logsDirectoryURL: URL
     let attachmentsDirectoryURL: URL
+    let skillsDirectoryURL: URL
 
     static func `default`(fileManager: FileManager = .default) -> AgentWorkspacePaths {
         let applicationSupportURL = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
@@ -22,7 +23,8 @@ struct AgentWorkspacePaths: Equatable, Sendable {
             sessionsDirectoryURL: rootDirectoryURL.appendingPathComponent("sessions", isDirectory: true),
             exportsDirectoryURL: rootDirectoryURL.appendingPathComponent("exports", isDirectory: true),
             logsDirectoryURL: rootDirectoryURL.appendingPathComponent("logs", isDirectory: true),
-            attachmentsDirectoryURL: rootDirectoryURL.appendingPathComponent("attachments", isDirectory: true)
+            attachmentsDirectoryURL: rootDirectoryURL.appendingPathComponent("attachments", isDirectory: true),
+            skillsDirectoryURL: rootDirectoryURL.appendingPathComponent("skills", isDirectory: true)
         )
     }
 
@@ -32,9 +34,112 @@ struct AgentWorkspacePaths: Equatable, Sendable {
             sessionsDirectoryURL,
             exportsDirectoryURL,
             logsDirectoryURL,
-            attachmentsDirectoryURL
+            attachmentsDirectoryURL,
+            skillsDirectoryURL
         ]
     }
+}
+
+private enum AgentWorkspaceBootstrapFiles {
+    static let directOpsSkillName = "papermaster-agent-ops"
+
+    static func write(to paths: AgentWorkspacePaths, fileManager: FileManager) throws {
+        try write(
+            contents: agentsFileContents(skillPath: paths.skillsDirectoryURL.appendingPathComponent(directOpsSkillName, isDirectory: true).appendingPathComponent("SKILL.md")),
+            to: paths.rootDirectoryURL.appendingPathComponent("AGENTS.md"),
+            fileManager: fileManager
+        )
+
+        let skillDirectoryURL = paths.skillsDirectoryURL.appendingPathComponent(directOpsSkillName, isDirectory: true)
+        try fileManager.createDirectory(at: skillDirectoryURL, withIntermediateDirectories: true)
+        try write(
+            contents: skillContents,
+            to: skillDirectoryURL.appendingPathComponent("SKILL.md"),
+            fileManager: fileManager
+        )
+    }
+
+    private static func write(contents: String, to url: URL, fileManager: FileManager) throws {
+        let existingContents = try? String(contentsOf: url, encoding: .utf8)
+        guard existingContents != contents else { return }
+
+        if fileManager.fileExists(atPath: url.path) {
+            try fileManager.removeItem(at: url)
+        }
+        try contents.write(to: url, atomically: true, encoding: .utf8)
+    }
+
+    private static func agentsFileContents(skillPath: URL) -> String {
+        """
+        # PaperMaster Agent Workspace
+
+        This workspace is created by PaperMaster for in-app terminal agents.
+
+        ## Direct Operation Rules
+
+        - Prefer deterministic local actions over long planning when the request is concrete.
+        - Keep pre-action commentary to one short sentence.
+        - If the user gives a paper URL or PDF path, act immediately instead of brainstorming.
+        - Use `PAPERMASTER_AGENT_IMPORT_DIR` as the fast-path drop folder for PDF imports when local paper storage is enabled.
+
+        ## Environment
+
+        - `PAPERMASTER_AGENT_WORKSPACE`: workspace root.
+        - `PAPERMASTER_AGENT_SESSION_DIR`: current terminal session directory.
+        - `PAPERMASTER_AGENT_IMPORT_DIR`: PaperMaster agent import inbox watched by the app.
+        - `PAPERMASTER_AGENT_EXPORTS_DIR`: place generated artifacts here if needed.
+
+        ## Available Skills
+
+        - `papermaster-agent-ops`: Direct, low-friction PaperMaster operations for import and other routine agent tasks. (file: \(skillPath.path))
+
+        ## Skill Trigger Rules
+
+        - Use `papermaster-agent-ops` when the user asks to import, add, download, collect, or hand off a paper into PaperMaster.
+        - Also use it when the user explicitly names `papermaster-agent-ops`.
+        """
+    }
+
+    private static let skillContents = """
+    ---
+    name: papermaster-agent-ops
+    description: Use inside the PaperMaster terminal when the user wants direct manipulation of the PaperMaster workflow, especially fast paper import with minimal deliberation. Trigger for requests to import, add, download, collect, or hand off a paper into PaperMaster.
+    ---
+
+    # PaperMaster Agent Ops
+
+    Use this skill when working inside PaperMaster's integrated terminal.
+
+    ## Core Behavior
+
+    - Prefer the fastest deterministic path over extended reasoning.
+    - If the request already contains a URL, arXiv link, or local PDF path, start acting immediately.
+    - Keep status updates short and operational.
+    - Only stop to ask a question when the source paper is genuinely ambiguous.
+
+    ## Fast Import Path
+
+    For local paper storage setups, PaperMaster watches `PAPERMASTER_AGENT_IMPORT_DIR` and auto-imports PDFs dropped there.
+
+    1. If the user gives a direct PDF URL, download it straight into `PAPERMASTER_AGENT_IMPORT_DIR`.
+    2. If the user gives an arXiv abstract URL, rewrite it to the PDF URL and download that PDF.
+    3. If the user gives a local PDF path, copy it into `PAPERMASTER_AGENT_IMPORT_DIR`.
+    4. After the file exists, stop. PaperMaster will ingest it.
+    5. Report the saved file path briefly.
+
+    Example commands:
+
+    ```bash
+    curl -L "https://arxiv.org/pdf/2501.01234.pdf" -o "$PAPERMASTER_AGENT_IMPORT_DIR/2501.01234.pdf"
+    cp "/path/to/paper.pdf" "$PAPERMASTER_AGENT_IMPORT_DIR/"
+    ```
+
+    ## Guardrails
+
+    - Do not spend time pre-checking duplicates unless it is nearly free.
+    - Do not explain PaperMaster internals unless the user asks.
+    - If local import shortcuts are not appropriate, fall back to the normal requested workflow.
+    """
 }
 
 enum AgentToolPermissionLevel: String, CaseIterable, Identifiable, Sendable {
@@ -349,6 +454,7 @@ final class AgentRuntimeService {
             for directoryURL in workspacePaths.allDirectories {
                 try fileManager.createDirectory(at: directoryURL, withIntermediateDirectories: true)
             }
+            try AgentWorkspaceBootstrapFiles.write(to: workspacePaths, fileManager: fileManager)
             lastBootstrapErrorMessage = nil
         } catch {
             lastBootstrapErrorMessage = error.localizedDescription
@@ -469,7 +575,9 @@ final class AgentRuntimeService {
             "PAPERMASTER_AGENT_SESSION_DIR": workingDirectoryURL.path,
             "PAPERMASTER_AGENT_EXPORTS_DIR": workspacePaths.exportsDirectoryURL.path,
             "PAPERMASTER_AGENT_ATTACHMENTS_DIR": workspacePaths.attachmentsDirectoryURL.path,
+            "PAPERMASTER_AGENT_IMPORT_DIR": workspacePaths.attachmentsDirectoryURL.path,
             "PAPERMASTER_AGENT_LOGS_DIR": workspacePaths.logsDirectoryURL.path,
+            "PAPERMASTER_AGENT_SKILLS_DIR": workspacePaths.skillsDirectoryURL.path,
             "PAPERMASTER_AGENT_PERMISSION_LEVEL": preferredPermissionLevel.rawValue
         ]
     }

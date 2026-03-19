@@ -48,11 +48,12 @@ final class AppServices {
     let textClipboard: TextClipboardWriting
     @ObservationIgnored private let fileManager: FileManager
     @ObservationIgnored private let paperCardHTMLDirectoryURL: URL
+    @ObservationIgnored private let agentImportDirectoryURL: URL
     @ObservationIgnored private let startupNoticeMessage: String?
     @ObservationIgnored private let startupErrorMessage: String?
     @ObservationIgnored private var noticeDismissTask: Task<Void, Never>?
     @ObservationIgnored private var storageFolderMonitorTask: Task<Void, Never>?
-    @ObservationIgnored private var monitoredStorageFolderPath: String?
+    @ObservationIgnored private var monitoredImportDirectorySignature: String?
     @ObservationIgnored private var activeLocalImportPaths: Set<String> = []
     private(set) var didBootstrap = false
     var presentedError: PresentedError?
@@ -74,6 +75,7 @@ final class AppServices {
         textClipboard: TextClipboardWriting = SystemTextClipboardWriter(),
         fileManager: FileManager = .default,
         paperCardHTMLDirectoryURL: URL? = nil,
+        agentImportDirectoryURL: URL? = nil,
         startupNoticeMessage: String? = nil,
         startupErrorMessage: String? = nil
     ) {
@@ -98,6 +100,7 @@ final class AppServices {
                 .appendingPathComponent("PaperMaster", isDirectory: true)
                 .appendingPathComponent("PaperCards", isDirectory: true)
         self.paperCardHTMLDirectoryURL = paperCardHTMLDirectoryURL ?? defaultPaperCardDirectoryURL
+        self.agentImportDirectoryURL = agentImportDirectoryURL ?? AgentWorkspacePaths.default(fileManager: fileManager).attachmentsDirectoryURL
         self.startupNoticeMessage = startupNoticeMessage
         self.startupErrorMessage = startupErrorMessage
     }
@@ -145,6 +148,7 @@ final class AppServices {
         await reminderService.requestAuthorization()
         schedulerService.applySchedule(to: papers, papersPerDay: settings.papersPerDay)
         try? context.save()
+        try? fileManager.createDirectory(at: agentImportDirectoryURL, withIntermediateDirectories: true)
         await reminderService.syncNotifications(for: papers, settings: settings)
         if let startupErrorMessage {
             presentedError = PresentedError(message: startupErrorMessage)
@@ -376,16 +380,16 @@ final class AppServices {
 
     func refreshStorageFolderMonitoring(context: ModelContext) {
         let settings = (try? context.fetch(FetchDescriptor<UserSettings>()).first) ?? nil
-        let monitoredPath = settings.flatMap(monitoredStorageFolderURL(for:))?.path
+        let monitoredDirectorySignature = settings.map(monitoredImportDirectorySignature(for:)) ?? nil
 
-        guard monitoredStorageFolderPath != monitoredPath || storageFolderMonitorTask == nil else {
+        guard monitoredImportDirectorySignature != monitoredDirectorySignature || storageFolderMonitorTask == nil else {
             return
         }
 
         storageFolderMonitorTask?.cancel()
-        monitoredStorageFolderPath = monitoredPath
+        monitoredImportDirectorySignature = monitoredDirectorySignature
 
-        guard monitoredPath != nil else {
+        guard monitoredDirectorySignature != nil else {
             storageFolderMonitorTask = nil
             return
         }
@@ -1013,25 +1017,32 @@ final class AppServices {
 
     private func runStorageFolderMonitoring(context: ModelContext) async {
         while Task.isCancelled == false {
-            guard let settings = (try? context.fetch(FetchDescriptor<UserSettings>()).first),
-                  let directoryURL = monitoredStorageFolderURL(for: settings) else {
-                monitoredStorageFolderPath = nil
+            guard let settings = (try? context.fetch(FetchDescriptor<UserSettings>()).first) else {
+                monitoredImportDirectorySignature = nil
                 return
             }
 
             let papers = (try? context.fetch(FetchDescriptor<Paper>())) ?? []
-            let outcomes = await importLocalPDFs(
-                at: discoverImportablePDFs(in: directoryURL, currentPapers: papers),
-                settings: settings,
-                currentPapers: papers,
-                in: context,
-                origin: .storageFolderScan
-            )
+            let monitoredSources = monitoredImportSources(for: settings)
+            if monitoredSources.isEmpty {
+                monitoredImportDirectorySignature = nil
+                return
+            }
 
-            let importedCount = outcomes.filter(\.didCreatePaper).count
-            if importedCount > 0 {
-                let noun = importedCount == 1 ? "paper" : "papers"
-                showNotice("Imported \(importedCount) \(noun) from the storage folder.")
+            for source in monitoredSources {
+                let outcomes = await importLocalPDFs(
+                    at: discoverImportablePDFs(in: source.directoryURL, currentPapers: papers),
+                    settings: settings,
+                    currentPapers: papers,
+                    in: context,
+                    origin: source.origin
+                )
+
+                let importedCount = outcomes.filter(\.didCreatePaper).count
+                if importedCount > 0 {
+                    let noun = importedCount == 1 ? "paper" : "papers"
+                    showNotice("Imported \(importedCount) \(noun) from \(source.noticeLabel).")
+                }
             }
 
             try? await Task.sleep(nanoseconds: 2_000_000_000)
@@ -1072,6 +1083,7 @@ final class AppServices {
                     try persistAndSync(allPapers: updatedPapers, settings: settings, context: context)
                 }
 
+                cleanupImportedSourceIfNeeded(fileURL: fileURL, result: result, origin: origin)
                 outcomes.append(result)
             } catch {
                 if origin == .drop {
@@ -1127,6 +1139,55 @@ final class AppServices {
         }
     }
 
+    private func monitoredImportSources(for settings: UserSettings) -> [MonitoredImportSource] {
+        var sources: [MonitoredImportSource] = []
+
+        if settings.paperStorageMode != .remoteSSH {
+            sources.append(
+                MonitoredImportSource(
+                    directoryURL: agentImportDirectoryURL,
+                    origin: .agentInbox,
+                    noticeLabel: "the agent import inbox"
+                )
+            )
+        }
+
+        if let directoryURL = monitoredStorageFolderURL(for: settings),
+           sources.contains(where: { $0.directoryURL.standardizedFileURL == directoryURL.standardizedFileURL }) == false {
+            sources.append(
+                MonitoredImportSource(
+                    directoryURL: directoryURL,
+                    origin: .storageFolderScan,
+                    noticeLabel: "the storage folder"
+                )
+            )
+        }
+
+        return sources
+    }
+
+    private func monitoredImportDirectorySignature(for settings: UserSettings) -> String? {
+        let paths = monitoredImportSources(for: settings)
+            .map { $0.directoryURL.standardizedFileURL.path }
+            .sorted()
+        guard paths.isEmpty == false else { return nil }
+        return paths.joined(separator: "\n")
+    }
+
+    private func cleanupImportedSourceIfNeeded(
+        fileURL: URL,
+        result: PaperImportResult,
+        origin: LocalPDFImportOrigin
+    ) {
+        guard origin == .agentInbox else { return }
+        if result.paper.managedPDFLocalURL?.standardizedFileURL == fileURL.standardizedFileURL {
+            return
+        }
+        guard result.notice == "That paper is already in your library." || result.paper.managedPDFLocalURL != nil else { return }
+
+        try? fileManager.removeItem(at: fileURL)
+    }
+
     private func queueSort(lhs: Paper, rhs: Paper) -> Bool {
         if lhs.queuePosition != rhs.queuePosition {
             return lhs.queuePosition < rhs.queuePosition
@@ -1138,4 +1199,11 @@ final class AppServices {
 private enum LocalPDFImportOrigin {
     case drop
     case storageFolderScan
+    case agentInbox
+}
+
+private struct MonitoredImportSource {
+    let directoryURL: URL
+    let origin: LocalPDFImportOrigin
+    let noticeLabel: String
 }

@@ -145,6 +145,36 @@ Common commands from the project root:
 
 The overlay script exists so builds and tests can still run when the local Swift macro host trust chain is broken. `build-app.sh` uses the same overlay automatically.
 
+## Codex In PaperMaster
+
+When you open the integrated terminal inside PaperMaster and start `codex`, the app now bootstraps a workspace-level `AGENTS.md` plus a built-in skill called `papermaster-agent-ops`.
+
+This skill is meant to make PaperMaster actions more direct:
+
+- If you ask Codex to import a paper and provide a PDF URL, arXiv URL, or local PDF path, it should prefer the shortest executable path instead of extended reasoning.
+- For local paper storage setups, PaperMaster watches `PAPERMASTER_AGENT_IMPORT_DIR` and auto-imports PDFs placed there by the agent.
+- The terminal session also exposes `PAPERMASTER_AGENT_WORKSPACE`, `PAPERMASTER_AGENT_IMPORT_DIR`, `PAPERMASTER_AGENT_EXPORTS_DIR`, and `PAPERMASTER_AGENT_SKILLS_DIR`.
+
+Typical usage inside the PaperMaster terminal:
+
+```text
+codex
+```
+
+Then ask naturally:
+
+```text
+Import this paper into PaperMaster: https://arxiv.org/abs/2505.13308
+```
+
+Or invoke the skill explicitly:
+
+```text
+Use papermaster-agent-ops to import this paper into PaperMaster: /Users/you/Downloads/paper.pdf
+```
+
+In the fast path, Codex should download or copy the PDF into `PAPERMASTER_AGENT_IMPORT_DIR`; PaperMaster then ingests it automatically.
+
 ## Shared AI Provider Setup
 
 The app uses one OpenAI-compatible provider setup for `Fusion Reactor`, `Paper Card` generation, and optional import auto-tagging.
