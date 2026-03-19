@@ -5,14 +5,16 @@
 <h1 align="center">PaperMaster</h1>
 
 <p align="center">
-  A native macOS paper queue for collecting papers, managing PDFs, planning daily reading, and generating research ideas.
+  The first paper reading tool built to bring agents directly into the reading loop, so your information gathering, triage, and follow-up work can be automated instead of manually stitched together.
 </p>
 
 <p align="center">
   <img src="assets/ui-preview.svg" alt="PaperMaster UI preview showing Today, Reader, and Fusion Reactor screens" width="100%" />
 </p>
 
-PaperMaster is a native macOS paper queue app for collecting papers, storing PDFs, scheduling what to read next, fusing papers into new research ideas, and reviewing PDFs without leaving the app.
+PaperMaster is a native macOS paper reading workspace for collecting papers, storing PDFs, scheduling what to read next, fusing papers into new research ideas, and reviewing PDFs without leaving the app.
+
+It is designed around a stronger idea than a normal paper manager: agents should not live outside your reading workflow. PaperMaster brings agent access directly into the app so local tools like `codex` can help accelerate literature discovery, triage, note-taking, queue planning, and other high-friction information tasks from the same workspace where you actually read.
 
 The app is built with `SwiftUI`, `SwiftData`, `PDFKit`, and `UserNotifications`.
 
@@ -46,6 +48,9 @@ Below is the actual `Fusion Reactor` screen running in the app, including loaded
 
 ## What The App Does
 
+- Bring a real integrated terminal into the app so you can launch local agents like `codex` directly inside your paper reading workflow.
+- Position PaperMaster as an `agent-native` reading tool instead of a passive paper archive.
+- Give you one workspace where reading, summarizing, tagging, planning, and agent-driven follow-up can happen together.
 - Import papers from arXiv abstract URLs, arXiv PDF URLs, direct PDF URLs, or manual metadata entry.
 - Import local PDFs by dragging them directly onto the app window.
 - Show a drop-target import UI when PDFs are dragged over the app.
@@ -67,6 +72,20 @@ Below is the actual `Fusion Reactor` screen running in the app, including loaded
 - Generate topic tags during import with an optional OpenAI-compatible AI provider.
 - Combine 2 to 6 papers in the `Fusion Reactor` screen by dragging them into the furnace and clicking the fire to request 3 fused research ideas from the backend AI.
 - Store feedback entries locally with the current screen and selected paper context, then export them to the clipboard.
+
+## Why Agent-Native Matters
+
+Most paper tools stop at storage, annotation, or chat. PaperMaster is being built around a different workflow assumption: the fastest way to increase research throughput is to let agents operate inside the paper reading environment itself.
+
+That means the long-term goal is not just "ask AI about a PDF." It is:
+
+- let an agent research a topic and bring relevant papers into your library
+- let an agent summarize findings directly into notes
+- let an agent create or refine tags
+- let an agent reorganize the reading queue based on your goals
+- let an agent reduce the mechanical work required to stay on top of fast-moving literature
+
+In short, PaperMaster is meant to increase your information acquisition speed by making paper reading programmable.
 
 ## Local-First Behavior
 
