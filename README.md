@@ -18,6 +18,35 @@ It is designed around a stronger idea than a normal paper manager: agents should
 
 The app is built with `SwiftUI`, `SwiftData`, `PDFKit`, and `UserNotifications`.
 
+## Screenshot Tour
+
+<table>
+  <tr>
+    <td width="50%" valign="top">
+      <img src="assets/paper-elf-preview.svg" alt="PaperMaster Reader view with the Paper Elf critique companion watching a passage and surfacing a comment bubble" width="100%" />
+      <strong>Reader + Paper Elf</strong><br />
+      Keep reading inside the app while the `Paper Elf` watches the current passage, surfaces critiques at the right moment, and keeps recent comments attached to your reader workflow.
+    </td>
+    <td width="50%" valign="top">
+      <img src="assets/library-paper-detail-ui.png" alt="PaperMaster Library and paper detail UI showing fuzzy search, metadata, BibTeX, and Create Paper Card actions" width="100%" />
+      <strong>Library + paper detail</strong><br />
+      Search by title, author, keyword, or tag, then jump straight into metadata, BibTeX, PDFs, and reusable `Paper Card` generation from the same view.
+    </td>
+  </tr>
+  <tr>
+    <td width="50%" valign="top">
+      <img src="assets/queue-paper-card-sample.png" alt="PaperMaster Queue view with scheduled papers and an open Paper Card summary panel" width="100%" />
+      <strong>Today + Queue + Paper Cards</strong><br />
+      Keep a realistic reading queue on the left while the right side turns each important paper into a polished, high-signal brief you can revisit later.
+    </td>
+    <td width="50%" valign="top">
+      <img src="assets/fusion-reactor-live-ui.png" alt="PaperMaster Fusion Reactor running UI with loaded materials, active furnace, and generated fusion results" width="100%" />
+      <strong>Fusion Reactor</strong><br />
+      Load a handful of papers, inspect the source material, and generate fresh research directions without leaving your local paper workspace.
+    </td>
+  </tr>
+</table>
+
 ## UI Preview
 
 The preview above highlights the app's main workflow:
@@ -26,13 +55,23 @@ The preview above highlights the app's main workflow:
 - `Reader`: review PDFs in-app and keep your reading flow inside the app.
 - `Fusion Reactor`: combine papers into new idea prompts with an optional OpenAI-compatible backend.
 
+The screenshots below show how that translates into daily utility inside the app.
+
+The `Reader` screen now also shows where PaperMaster starts behaving less like a passive PDF viewer. `Paper Elf` acts as an in-context critique companion: it watches the passage you are dwelling on, interrupts when it spots a weak comparison or interesting claim, and keeps those comments in the same reading workspace.
+
+<p align="center">
+  <img src="assets/paper-elf-preview.svg" alt="PaperMaster Reader view with the Paper Elf critique companion watching a passage and surfacing a comment bubble" width="100%" />
+</p>
+
 The `Library` and paper detail flow keeps fuzzy search, local paper browsing, PDF access, BibTeX, and `Paper Card` generation in one place:
 
 <p align="center">
   <img src="assets/library-paper-detail-ui.png" alt="PaperMaster Library and paper detail UI showing fuzzy search, metadata, BibTeX, and Create Paper Card actions" width="100%" />
 </p>
 
-The `Queue` view also highlights one of PaperMaster's strongest features: exceptionally high-quality `Paper Cards`. Instead of a thin AI summary, the card is designed to feel like a polished research artifact that is worth saving, reviewing, copying, and reusing later. It turns a paper into a clean, structured, high-signal brief with strong readability, obvious sectioning, and enough substance to be genuinely useful during follow-up work.
+That makes the `Library` screen more than a storage list: it becomes the place where you can validate a paper quickly, inspect the metadata quality, reopen the PDF, copy citation material, and decide whether the paper deserves a richer summary artifact.
+
+The `Queue` view highlights one of PaperMaster's strongest features: exceptionally high-quality `Paper Cards`. Instead of a thin AI summary, the card is designed to feel like a polished research artifact that is worth saving, reviewing, copying, and reusing later. It turns a paper into a clean, structured, high-signal brief with strong readability, obvious sectioning, and enough substance to be genuinely useful during follow-up work.
 
 This makes the `Paper Card` workflow especially valuable for serious reading: scheduled papers stay visible on the left, while the right side becomes a refined knowledge panel that helps you recall the core idea, contributions, methods, comparisons, and limitations quickly without digging back through the PDF:
 
@@ -40,7 +79,7 @@ This makes the `Paper Card` workflow especially valuable for serious reading: sc
   <img src="assets/queue-paper-card-sample.png" alt="PaperMaster Queue view with scheduled papers and an open Paper Card summary panel" width="100%" />
 </p>
 
-Below is the actual `Fusion Reactor` screen running in the app, including loaded papers, the furnace interaction, and generated idea cards:
+Below is the actual `Fusion Reactor` screen running in the app, including loaded papers, the furnace interaction, and generated idea cards. This is where PaperMaster shifts from paper management into idea generation: the app keeps the source papers, the prompt surface, and the resulting concept cards in one place so synthesis work is easier to repeat and refine.
 
 <p align="center">
   <img src="assets/fusion-reactor-live-ui.png" alt="PaperMaster Fusion Reactor running UI with loaded materials, active furnace, and generated fusion results" width="100%" />
@@ -66,6 +105,7 @@ Below is the actual `Fusion Reactor` screen running in the app, including loaded
 - Show dedicated `Today`, `Inbox`, `Queue`, `Library`, `Fusion Reactor`, and `Settings` screens.
 - Reorder queued papers, snooze papers by a day, and move items across `inbox`, `scheduled`, `reading`, `done`, and `archived`.
 - Read PDFs in-app with `PDFKit`, preferring managed or cached copies when available.
+- Run the `Paper Elf` inside the reader so the current passage can trigger autonomous critique without leaving the PDF workflow.
 - Browse the library with fuzzy search across titles, authors, keywords, and tags.
 - Generate a structured AI `Paper Card` from the paper detail view, save it locally, copy it as text or HTML, and open the HTML export in a browser.
 - Schedule native macOS notifications for the daily summary and for due or overdue papers.

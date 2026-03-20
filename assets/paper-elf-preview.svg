@@ -1,0 +1,122 @@
+<svg width="1600" height="980" viewBox="0 0 1600 980" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <rect width="1600" height="980" rx="48" fill="#08111A"/>
+  <rect x="24" y="24" width="1552" height="932" rx="36" fill="url(#bg)" stroke="#CCA866" stroke-opacity="0.18" stroke-width="2"/>
+
+  <text x="86" y="118" fill="#F7F1E5" font-family="SF Pro Display, Arial, sans-serif" font-size="52" font-weight="700">PaperMaster</text>
+  <text x="86" y="162" fill="#C9B48C" font-family="SF Pro Text, Arial, sans-serif" font-size="24">Reader + Paper Elf critique workflow inside the app</text>
+
+  <g transform="translate(72 210)">
+    <rect width="1456" height="666" rx="30" fill="#122131" stroke="#CCA866" stroke-opacity="0.18" stroke-width="2"/>
+    <circle cx="34" cy="34" r="8" fill="#B84C43"/>
+    <circle cx="60" cy="34" r="8" fill="#CCA866"/>
+    <circle cx="86" cy="34" r="8" fill="#456853"/>
+    <text x="124" y="44" fill="#F7F1E5" font-family="SF Pro Display, Arial, sans-serif" font-size="28" font-weight="600">Reader</text>
+
+    <rect x="28" y="80" width="82" height="558" rx="24" fill="#0C1823"/>
+    <rect x="48" y="110" width="42" height="56" rx="12" fill="#1B2F42"/>
+    <rect x="48" y="188" width="42" height="56" rx="12" fill="#1B2F42"/>
+    <rect x="48" y="266" width="42" height="56" rx="12" fill="#1B2F42"/>
+    <rect x="48" y="344" width="42" height="56" rx="12" fill="#1B2F42"/>
+    <rect x="48" y="422" width="42" height="56" rx="12" fill="#1B2F42"/>
+    <rect x="48" y="500" width="42" height="56" rx="12" fill="#1B2F42"/>
+
+    <rect x="132" y="92" width="798" height="542" rx="26" fill="#F7F1E5"/>
+    <rect x="160" y="118" width="130" height="28" rx="14" fill="#EAD7B4"/>
+    <text x="184" y="137" fill="#7E6440" font-family="SF Pro Text, Arial, sans-serif" font-size="15" font-weight="600">PDFKit view</text>
+
+    <rect x="194" y="184" width="7" height="326" rx="3.5" fill="#CCA866"/>
+    <rect x="226" y="176" width="430" height="16" rx="8" fill="#223546" fill-opacity="0.94"/>
+    <rect x="226" y="210" width="512" height="11" rx="5.5" fill="#6F7B83" fill-opacity="0.70"/>
+    <rect x="226" y="240" width="488" height="11" rx="5.5" fill="#6F7B83" fill-opacity="0.70"/>
+    <rect x="226" y="270" width="534" height="11" rx="5.5" fill="#6F7B83" fill-opacity="0.70"/>
+
+    <rect x="214" y="312" width="566" height="74" rx="18" fill="#FDE7C3"/>
+    <rect x="226" y="328" width="520" height="12" rx="6" fill="#6F7B83" fill-opacity="0.82"/>
+    <rect x="226" y="352" width="500" height="12" rx="6" fill="#6F7B83" fill-opacity="0.82"/>
+    <rect x="226" y="376" width="438" height="8" rx="4" fill="#F59E0B" fill-opacity="0.90"/>
+
+    <rect x="226" y="420" width="486" height="11" rx="5.5" fill="#6F7B83" fill-opacity="0.70"/>
+    <rect x="226" y="450" width="460" height="11" rx="5.5" fill="#6F7B83" fill-opacity="0.70"/>
+    <rect x="226" y="480" width="404" height="11" rx="5.5" fill="#6F7B83" fill-opacity="0.70"/>
+
+    <rect x="672" y="516" width="182" height="40" rx="20" fill="#456853"/>
+    <text x="730" y="542" fill="#F7F1E5" font-family="SF Pro Text, Arial, sans-serif" font-size="18" font-weight="600">Ask AI</text>
+
+    <g transform="translate(640 180)">
+      <rect width="244" height="156" rx="20" fill="url(#bubble)" stroke="#F59E0B" stroke-opacity="0.34" stroke-width="1.2"/>
+      <text x="18" y="28" fill="#D97706" font-family="SF Pro Text, Arial, sans-serif" font-size="13" font-weight="700">Skeptical</text>
+      <text x="18" y="56" fill="#26323D" font-family="SF Pro Text, Arial, sans-serif" font-size="16" font-weight="600">
+        <tspan x="18" dy="0">Claimed gain is strong, but</tspan>
+        <tspan x="18" dy="24">the baseline details here</tspan>
+        <tspan x="18" dy="24">still look thin.</tspan>
+      </text>
+      <text x="18" y="128" fill="#6B7280" font-family="SF Pro Text, Arial, sans-serif" font-size="13">
+        <tspan x="18" dy="0">Tap the elf to revisit the</tspan>
+        <tspan x="18" dy="20">exact passage it flagged.</tspan>
+      </text>
+      <path d="M96 156L118 176L138 156" fill="#F8E7CC" stroke="#F59E0B" stroke-opacity="0.34" stroke-width="1.2"/>
+    </g>
+
+    <g transform="translate(838 354)">
+      <ellipse cx="36" cy="72" rx="26" ry="8" fill="#000000" fill-opacity="0.12"/>
+      <rect x="20" y="6" width="32" height="36" rx="16" fill="#F59E0B" fill-opacity="0.18"/>
+      <ellipse cx="36" cy="22" rx="16" ry="18" fill="#F5A623"/>
+      <path d="M19 17C22 10 28 8 31 9C27 14 26 20 21 24L19 17Z" fill="#F5A623"/>
+      <path d="M53 17C50 10 44 8 41 9C45 14 46 20 51 24L53 17Z" fill="#F5A623"/>
+      <rect x="29" y="19" width="4" height="4" rx="2" fill="#25313C"/>
+      <rect x="39" y="19" width="4" height="4" rx="2" fill="#25313C"/>
+      <rect x="31" y="29" width="10" height="2.5" rx="1.25" fill="#25313C" fill-opacity="0.70"/>
+      <rect x="20" y="40" width="32" height="30" rx="14" fill="url(#elfBody)"/>
+      <path d="M36 32L45 42H27L36 32Z" fill="#F59E0B" fill-opacity="0.84"/>
+    </g>
+
+    <rect x="958" y="92" width="470" height="542" rx="26" fill="#0C1823"/>
+    <text x="994" y="138" fill="#F7F1E5" font-family="SF Pro Display, Arial, sans-serif" font-size="30" font-weight="600">Elf Companion</text>
+    <text x="994" y="172" fill="#C9B48C" font-family="SF Pro Text, Arial, sans-serif" font-size="17">Autonomous critique over the passage you are reading right now.</text>
+
+    <rect x="1244" y="118" width="130" height="34" rx="17" fill="#F59E0B" fill-opacity="0.12"/>
+    <text x="1276" y="141" fill="#F59E0B" font-family="SF Pro Text, Arial, sans-serif" font-size="15" font-weight="700">Listening</text>
+
+    <rect x="994" y="206" width="398" height="72" rx="18" fill="#122131" stroke="#CCA866" stroke-opacity="0.14"/>
+    <text x="1018" y="232" fill="#F7F1E5" font-family="SF Pro Text, Arial, sans-serif" font-size="16" font-weight="600">Watching page 8 via selection</text>
+    <text x="1018" y="256" fill="#9FB1C3" font-family="SF Pro Text, Arial, sans-serif" font-size="14">The elf waits until you dwell on a passage worth interrupting.</text>
+
+    <rect x="994" y="304" width="398" height="116" rx="20" fill="#122131" stroke="#F59E0B" stroke-opacity="0.18"/>
+    <text x="1018" y="332" fill="#F59E0B" font-family="SF Pro Text, Arial, sans-serif" font-size="14" font-weight="700">Skeptical</text>
+    <text x="1018" y="360" fill="#F7F1E5" font-family="SF Pro Text, Arial, sans-serif" font-size="16" font-weight="600">
+      <tspan x="1018" dy="0">This ablation omits the control that would</tspan>
+      <tspan x="1018" dy="24">justify the headline claim.</tspan>
+    </text>
+    <text x="1018" y="404" fill="#9FB1C3" font-family="SF Pro Text, Arial, sans-serif" font-size="13">Stored as a recent critique so you can return later.</text>
+
+    <rect x="994" y="442" width="398" height="116" rx="20" fill="#122131" stroke="#4FD1C5" stroke-opacity="0.18"/>
+    <text x="1018" y="470" fill="#4FD1C5" font-family="SF Pro Text, Arial, sans-serif" font-size="14" font-weight="700">Intrigued</text>
+    <text x="1018" y="498" fill="#F7F1E5" font-family="SF Pro Text, Arial, sans-serif" font-size="16" font-weight="600">
+      <tspan x="1018" dy="0">This failure mode could become a useful</tspan>
+      <tspan x="1018" dy="24">follow-up experiment.</tspan>
+    </text>
+    <text x="1018" y="542" fill="#9FB1C3" font-family="SF Pro Text, Arial, sans-serif" font-size="13">Useful when you want critique and idea generation in the same reader flow.</text>
+
+    <rect x="994" y="584" width="122" height="28" rx="14" fill="#1B2F42"/>
+    <text x="1024" y="603" fill="#C9B48C" font-family="SF Pro Text, Arial, sans-serif" font-size="13" font-weight="600">Recent critiques</text>
+    <rect x="1132" y="584" width="124" height="28" rx="14" fill="#1B2F42"/>
+    <text x="1160" y="603" fill="#C9B48C" font-family="SF Pro Text, Arial, sans-serif" font-size="13" font-weight="600">Tap to focus</text>
+    <rect x="1272" y="584" width="120" height="28" rx="14" fill="#1B2F42"/>
+    <text x="1308" y="603" fill="#C9B48C" font-family="SF Pro Text, Arial, sans-serif" font-size="13" font-weight="600">Local state</text>
+  </g>
+
+  <defs>
+    <linearGradient id="bg" x1="800" y1="24" x2="800" y2="956" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#142434"/>
+      <stop offset="1" stop-color="#09131D"/>
+    </linearGradient>
+    <linearGradient id="bubble" x1="122" y1="0" x2="122" y2="156" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#FEF5E7"/>
+      <stop offset="1" stop-color="#F8E7CC"/>
+    </linearGradient>
+    <linearGradient id="elfBody" x1="36" y1="40" x2="36" y2="70" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#F5A623"/>
+      <stop offset="1" stop-color="#D97706"/>
+    </linearGradient>
+  </defs>
+</svg>
