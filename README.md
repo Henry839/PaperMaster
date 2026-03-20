@@ -28,18 +28,25 @@ The app is built with `SwiftUI`, `SwiftData`, `PDFKit`, and `UserNotifications`.
       Keep reading inside the app while the `Paper Elf` watches the current passage, surfaces critiques at the right moment, and keeps recent comments attached to your reader workflow.
     </td>
     <td width="50%" valign="top">
+      <img src="assets/hot-papers-preview.svg" alt="PaperMaster Hot Papers view showing category filters, ranked arXiv submissions, relevance badges, and one-click import actions" width="100%" />
+      <strong>Hot Papers</strong><br />
+      Refresh a category, rank new arXiv submissions against your existing library signals, and pull promising work into PaperMaster before it disappears from your radar.
+    </td>
+  </tr>
+  <tr>
+    <td width="50%" valign="top">
       <img src="assets/library-paper-detail-ui.png" alt="PaperMaster Library and paper detail UI showing fuzzy search, metadata, BibTeX, and Create Paper Card actions" width="100%" />
       <strong>Library + paper detail</strong><br />
       Search by title, author, keyword, or tag, then jump straight into metadata, BibTeX, PDFs, and reusable `Paper Card` generation from the same view.
     </td>
-  </tr>
-  <tr>
     <td width="50%" valign="top">
       <img src="assets/queue-paper-card-sample.png" alt="PaperMaster Queue view with scheduled papers and an open Paper Card summary panel" width="100%" />
       <strong>Today + Queue + Paper Cards</strong><br />
       Keep a realistic reading queue on the left while the right side turns each important paper into a polished, high-signal brief you can revisit later.
     </td>
-    <td width="50%" valign="top">
+  </tr>
+  <tr>
+    <td colspan="2" valign="top">
       <img src="assets/fusion-reactor-live-ui.png" alt="PaperMaster Fusion Reactor running UI with loaded materials, active furnace, and generated fusion results" width="100%" />
       <strong>Fusion Reactor</strong><br />
       Load a handful of papers, inspect the source material, and generate fresh research directions without leaving your local paper workspace.
@@ -61,6 +68,12 @@ The `Reader` screen now also shows where PaperMaster starts behaving less like a
 
 <p align="center">
   <img src="assets/paper-elf-preview.svg" alt="PaperMaster Reader view with the Paper Elf critique companion watching a passage and surfacing a comment bubble" width="100%" />
+</p>
+
+The `Hot Papers` screen keeps discovery inside the same workspace as the rest of your reading queue. Instead of browsing arXiv in a separate tab and manually triaging later, you can refresh a category, see why a paper is relevant to your current library, and import it immediately when it looks worth tracking.
+
+<p align="center">
+  <img src="assets/hot-papers-preview.svg" alt="PaperMaster Hot Papers view showing category filters, ranked arXiv submissions, relevance badges, and one-click import actions" width="100%" />
 </p>
 
 The `Library` and paper detail flow keeps fuzzy search, local paper browsing, PDF access, BibTeX, and `Paper Card` generation in one place:
@@ -102,10 +115,11 @@ Below is the actual `Fusion Reactor` screen running in the app, including loaded
 - Watch the active local paper storage folder and auto-import newly copied PDFs.
 - Bulk-import an existing local paper folder by selecting it as the storage directory, then letting PaperMaster scan and ingest the contained PDFs.
 - Keep a queue of `scheduled` and `reading` papers based on your `papers/day` capacity.
-- Show dedicated `Today`, `Inbox`, `Queue`, `Library`, `Fusion Reactor`, and `Settings` screens.
+- Show dedicated `Today`, `Inbox`, `Queue`, `Library`, `Hot Papers`, `Fusion Reactor`, and `Settings` screens.
 - Reorder queued papers, snooze papers by a day, and move items across `inbox`, `scheduled`, `reading`, `done`, and `archived`.
 - Read PDFs in-app with `PDFKit`, preferring managed or cached copies when available.
 - Run the `Paper Elf` inside the reader so the current passage can trigger autonomous critique without leaving the PDF workflow.
+- Discover recent arXiv submissions in `Hot Papers`, score them against your library signals, and import promising ones in one click.
 - Browse the library with fuzzy search across titles, authors, keywords, and tags.
 - Generate a structured AI `Paper Card` from the paper detail view, save it locally, copy it as text or HTML, and open the HTML export in a browser.
 - Schedule native macOS notifications for the daily summary and for due or overdue papers.
