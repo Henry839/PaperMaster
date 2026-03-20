@@ -29,6 +29,21 @@ struct StubMetadataResolver: MetadataResolving {
     }
 }
 
+final class DelayedMetadataResolver: MetadataResolving, @unchecked Sendable {
+    private let metadata: ResolvedPaperMetadata
+    private let delayNanoseconds: UInt64
+
+    init(metadata: ResolvedPaperMetadata, delayNanoseconds: UInt64) {
+        self.metadata = metadata
+        self.delayNanoseconds = delayNanoseconds
+    }
+
+    func resolve(url: URL) async throws -> ResolvedPaperMetadata {
+        try await Task.sleep(nanoseconds: delayNanoseconds)
+        return metadata
+    }
+}
+
 final class SpyPaperTagger: PaperTagGenerating, @unchecked Sendable {
     private(set) var inputs: [PaperTaggingInput] = []
     private let handler: @Sendable (PaperTaggingInput, PaperTaggingConfiguration) throws -> [String]

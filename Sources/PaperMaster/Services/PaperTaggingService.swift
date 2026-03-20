@@ -54,7 +54,7 @@ protocol HTTPNetworking: Sendable {
 
 struct URLSessionHTTPNetworking: HTTPNetworking {
     func data(for request: URLRequest) async throws -> (Data, URLResponse) {
-        try await URLSession.shared.data(for: request)
+        try await NetworkTransport.data(for: request)
     }
 }
 

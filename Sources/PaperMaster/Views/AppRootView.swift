@@ -331,11 +331,13 @@ struct AppRootView: View {
 
     @ToolbarContentBuilder
     private var toolbarContent: some ToolbarContent {
-        ToolbarItemGroup(placement: .primaryAction) {
+        ToolbarItem(placement: .primaryAction) {
             Button("Feedback", systemImage: "square.and.pencil") {
                 router.isFeedbackSheetPresented = true
             }
+        }
 
+        ToolbarItem(placement: .primaryAction) {
             Button("Terminal", systemImage: "terminal") {
                 if agentRuntime.isPanelVisible {
                     agentRuntime.isPanelVisible = false
@@ -346,12 +348,16 @@ struct AppRootView: View {
                     }
                 }
             }
+        }
 
+        ToolbarItem(placement: .primaryAction) {
             Button("Add Paper", systemImage: "plus") {
                 router.isImportSheetPresented = true
             }
+        }
 
-            if let selectedPaper, let settings {
+        if let selectedPaper, let settings {
+            ToolbarItem(placement: .primaryAction) {
                 Button("Read", systemImage: "book") {
                     Task {
                         router.readerPresentation = await services.prepareReader(
@@ -418,21 +424,6 @@ struct AppRootView: View {
 
                 continuation.resume(returning: nil)
             }
-        }
-    }
-
-    @ViewBuilder
-    private var noticeBanner: some View {
-        if let notice = services.presentedNotice {
-            Text(notice.message)
-                .font(.subheadline.weight(.semibold))
-                .padding(.horizontal, 14)
-                .padding(.vertical, 10)
-                .background(.regularMaterial)
-                .clipShape(Capsule())
-                .shadow(color: Color.black.opacity(0.12), radius: 14, y: 8)
-                .padding(.top, 14)
-                .transition(.move(edge: .top).combined(with: .opacity))
         }
     }
 
@@ -850,6 +841,21 @@ struct AppRootView: View {
         draggedQueuePaperID = nil
         queuePreviewPaperIDs = nil
         queueDropTargetPaperID = nil
+    }
+
+    @ViewBuilder
+    private var noticeBanner: some View {
+        if let message = services.importStatusMessage ?? services.presentedNotice?.message {
+            Text(message)
+                .font(.subheadline.weight(.semibold))
+                .padding(.horizontal, 14)
+                .padding(.vertical, 10)
+                .background(.regularMaterial)
+                .clipShape(Capsule())
+                .shadow(color: Color.black.opacity(0.12), radius: 14, y: 8)
+                .padding(.top, 14)
+                .transition(.move(edge: .top).combined(with: .opacity))
+        }
     }
 
 }

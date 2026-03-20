@@ -621,6 +621,49 @@ final class AppServicesTests: XCTestCase {
         XCTAssertEqual(try context.fetchCount(FetchDescriptor<Paper>()), 1)
     }
 
+    func testStartImportPaperRunsInBackgroundAndPublishesProgress() async throws {
+        let container = try TestSupport.makeInMemoryContainer()
+        let context = ModelContext(container)
+        let settings = UserSettings(defaultImportBehavior: .scheduleImmediately)
+        context.insert(settings)
+
+        let services = AppServices(
+            importService: PaperImportService(
+                metadataResolver: DelayedMetadataResolver(
+                    metadata: ResolvedPaperMetadata(
+                        title: "Background Import",
+                        authors: ["Jane Doe"],
+                        abstractText: "Imported asynchronously.",
+                        sourceURL: URL(string: "https://example.com/background-import")!,
+                        pdfURL: nil
+                    ),
+                    delayNanoseconds: 250_000_000
+                )
+            ),
+            reminderService: ReminderService(center: FakeNotificationCenter())
+        )
+
+        services.startImportPaper(
+            request: PaperCaptureRequest(sourceText: "https://example.com/background-import"),
+            settings: settings,
+            currentPapers: [],
+            in: context
+        )
+
+        XCTAssertEqual(
+            services.importStatusMessage,
+            "Importing paper (1/3): fetching metadata and preparing the paper."
+        )
+        XCTAssertEqual(try context.fetchCount(FetchDescriptor<Paper>()), 0)
+
+        try await Task.sleep(nanoseconds: 500_000_000)
+
+        let papers = try context.fetch(FetchDescriptor<Paper>())
+        XCTAssertEqual(papers.count, 1)
+        XCTAssertEqual(papers.first?.title, "Background Import")
+        XCTAssertEqual(services.importStatusMessage, "Import complete: the paper is ready in your library.")
+    }
+
     private func focusPassage(pageIndex: Int, text: String) throws -> ReaderFocusPassageSnapshot {
         try XCTUnwrap(
             ReaderFocusPassageSnapshot(

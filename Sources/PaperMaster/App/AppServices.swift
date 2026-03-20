@@ -52,12 +52,14 @@ final class AppServices {
     @ObservationIgnored private let startupNoticeMessage: String?
     @ObservationIgnored private let startupErrorMessage: String?
     @ObservationIgnored private var noticeDismissTask: Task<Void, Never>?
+    @ObservationIgnored private var importStatusDismissTask: Task<Void, Never>?
     @ObservationIgnored private var storageFolderMonitorTask: Task<Void, Never>?
     @ObservationIgnored private var monitoredImportDirectorySignature: String?
     @ObservationIgnored private var activeLocalImportPaths: Set<String> = []
     private(set) var didBootstrap = false
     var presentedError: PresentedError?
     var presentedNotice: PresentedNotice?
+    var importStatusMessage: String?
 
     init(
         importService: PaperImportService,
@@ -177,6 +179,44 @@ final class AppServices {
         currentPapers: [Paper],
         in context: ModelContext
     ) async -> Paper? {
+        await performImportPaper(
+            request: request,
+            settings: settings,
+            currentPapers: currentPapers,
+            in: context,
+            reportsProgress: false
+        )
+    }
+
+    func startImportPaper(
+        request: PaperCaptureRequest,
+        settings: UserSettings,
+        currentPapers: [Paper],
+        in context: ModelContext,
+        onCompletion: (@MainActor (Paper?) -> Void)? = nil
+    ) {
+        updateImportStatus("Importing paper (1/3): fetching metadata and preparing the paper.")
+
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            let paper = await self.performImportPaper(
+                request: request,
+                settings: settings,
+                currentPapers: currentPapers,
+                in: context,
+                reportsProgress: true
+            )
+            onCompletion?(paper)
+        }
+    }
+
+    private func performImportPaper(
+        request: PaperCaptureRequest,
+        settings: UserSettings,
+        currentPapers: [Paper],
+        in context: ModelContext,
+        reportsProgress: Bool
+    ) async -> Paper? {
         do {
             let result = try await importService.createPaper(from: request, settings: settings, in: context)
             let paper = result.paper
@@ -184,20 +224,38 @@ final class AppServices {
                 if let notice = result.notice {
                     showNotice(notice)
                 }
+                if reportsProgress {
+                    completeImportStatus("Import complete: that paper is already in your library.")
+                }
                 return paper
             }
+            let existingPapers = (try? context.fetch(FetchDescriptor<Paper>())) ?? currentPapers
+            let papersExcludingImported = existingPapers.filter { $0.id != paper.id }
             paper.manualDueDateOverride = nil
             if paper.status.isActiveQueue {
-                paper.queuePosition = nextQueuePosition(in: currentPapers + [paper])
+                paper.queuePosition = nextQueuePosition(in: papersExcludingImported)
+            }
+            if reportsProgress {
+                updateImportStatus("Importing paper (2/3): saving the PDF and library metadata.")
             }
             let storageNotice = await storeManagedPDFIfPossible(for: paper, settings: settings)
-            try persistAndSync(allPapers: currentPapers + [paper], settings: settings, context: context)
+            let syncedPapers = papersExcludingImported + [paper]
+            if reportsProgress {
+                updateImportStatus("Importing paper (3/3): updating your reading queue and reminders.")
+            }
+            try persistAndSync(allPapers: syncedPapers, settings: settings, context: context)
             refreshStorageFolderMonitoring(context: context)
             if let notice = combinedNoticeMessages(result.notice, storageNotice) {
                 showNotice(notice)
             }
+            if reportsProgress {
+                completeImportStatus("Import complete: the paper is ready in your library.")
+            }
             return paper
         } catch {
+            if reportsProgress {
+                failImportStatus("Import failed: \(error.localizedDescription)")
+            }
             present(error)
             return nil
         }
@@ -289,7 +347,12 @@ final class AppServices {
         }
 
         do {
-            try persistAndSync(allPapers: papers, settings: settings, context: context)
+            try persistAndSync(
+                allPapers: papers,
+                settings: settings,
+                context: context,
+                referenceDate: referenceDate
+            )
             let noun = overdueScheduledPapers.count == 1 ? "paper" : "papers"
             showNotice("Replanned \(overdueScheduledPapers.count) overdue \(noun) from today.")
         } catch {
@@ -405,6 +468,11 @@ final class AppServices {
         currentPapers: [Paper],
         in context: ModelContext
     ) async {
+        guard fileURLs.isEmpty == false else { return }
+
+        let totalCount = Array(Set(fileURLs.map(\.standardizedFileURL))).count
+        updateImportStatus("Preparing to import \(totalCount) PDF\(totalCount == 1 ? "" : "s").")
+
         let outcomes = await importLocalPDFs(
             at: fileURLs,
             settings: settings,
@@ -414,10 +482,15 @@ final class AppServices {
         )
 
         let importedCount = outcomes.filter(\.didCreatePaper).count
-        guard importedCount > 0 else { return }
+        if importedCount > 0 {
+            let noun = importedCount == 1 ? "paper" : "papers"
+            showNotice("Imported \(importedCount) \(noun) from dropped PDFs.")
+        }
 
-        let noun = importedCount == 1 ? "paper" : "papers"
-        showNotice("Imported \(importedCount) \(noun) from dropped PDFs.")
+        let summary = importedCount == 0
+            ? "No new papers were imported."
+            : "Imported \(importedCount) of \(totalCount) PDFs."
+        completeImportStatus(summary)
     }
 
     func persistNotes(context: ModelContext) {
@@ -901,8 +974,17 @@ final class AppServices {
         }
     }
 
-    private func persistAndSync(allPapers: [Paper], settings: UserSettings, context: ModelContext) throws {
-        schedulerService.applySchedule(to: allPapers, papersPerDay: settings.papersPerDay)
+    private func persistAndSync(
+        allPapers: [Paper],
+        settings: UserSettings,
+        context: ModelContext,
+        referenceDate: Date = .now
+    ) throws {
+        schedulerService.applySchedule(
+            to: allPapers,
+            papersPerDay: settings.papersPerDay,
+            referenceDate: referenceDate
+        )
         try context.save()
         Task { @MainActor in
             await reminderService.syncNotifications(for: allPapers, settings: settings)
@@ -937,6 +1019,32 @@ final class AppServices {
 
     private func present(_ error: Error) {
         presentedError = PresentedError(message: error.localizedDescription)
+    }
+
+    private func updateImportStatus(_ message: String) {
+        importStatusDismissTask?.cancel()
+        importStatusMessage = message
+    }
+
+    private func completeImportStatus(_ message: String) {
+        updateImportStatus(message)
+        dismissImportStatus(after: 1_500_000_000)
+    }
+
+    private func failImportStatus(_ message: String) {
+        updateImportStatus(message)
+        dismissImportStatus(after: 2_500_000_000)
+    }
+
+    private func dismissImportStatus(after nanoseconds: UInt64) {
+        importStatusDismissTask?.cancel()
+        let message = importStatusMessage
+        importStatusDismissTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: nanoseconds)
+            guard Task.isCancelled == false else { return }
+            guard self?.importStatusMessage == message else { return }
+            self?.importStatusMessage = nil
+        }
     }
 
     private func writePaperCardHTML(_ htmlContent: String, for paper: Paper) throws -> URL {
@@ -1057,8 +1165,15 @@ final class AppServices {
         origin: LocalPDFImportOrigin
     ) async -> [PaperImportResult] {
         var outcomes: [PaperImportResult] = []
+        let uniqueFileURLs = Array(Set(fileURLs.map(\.standardizedFileURL))).sorted(by: { $0.path < $1.path })
 
-        for fileURL in Array(Set(fileURLs.map(\.standardizedFileURL))).sorted(by: { $0.path < $1.path }) {
+        for (index, fileURL) in uniqueFileURLs.enumerated() {
+            if origin == .drop {
+                updateImportStatus(
+                    "Importing PDF \(index + 1)/\(uniqueFileURLs.count): \(fileURL.lastPathComponent)"
+                )
+            }
+
             let path = fileURL.path
             guard activeLocalImportPaths.contains(path) == false else { continue }
             activeLocalImportPaths.insert(path)
@@ -1073,14 +1188,19 @@ final class AppServices {
 
                 if result.didCreatePaper {
                     let paper = result.paper
+                    let existingPapers = (try? context.fetch(FetchDescriptor<Paper>())) ?? currentPapers
+                    let papersExcludingImported = existingPapers.filter { $0.id != paper.id }
                     paper.manualDueDateOverride = nil
                     if paper.status.isActiveQueue {
-                        paper.queuePosition = nextQueuePosition(in: currentPapers + outcomes.map(\.paper) + [paper])
+                        paper.queuePosition = nextQueuePosition(in: papersExcludingImported)
                     }
 
                     let _ = await storeManagedLocalPDFIfPossible(for: paper, sourceFileURL: fileURL, settings: settings)
-                    let updatedPapers = ((try? context.fetch(FetchDescriptor<Paper>())) ?? currentPapers) + []
-                    try persistAndSync(allPapers: updatedPapers, settings: settings, context: context)
+                    try persistAndSync(
+                        allPapers: papersExcludingImported + [paper],
+                        settings: settings,
+                        context: context
+                    )
                 }
 
                 cleanupImportedSourceIfNeeded(fileURL: fileURL, result: result, origin: origin)

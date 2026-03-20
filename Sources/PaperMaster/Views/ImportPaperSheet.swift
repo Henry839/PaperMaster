@@ -14,7 +14,7 @@ struct ImportPaperSheet: View {
     @State private var manualAuthors = ""
     @State private var manualAbstract = ""
     @State private var importBehavior: ImportBehavior
-    @State private var isImporting = false
+    @State private var didSubmitImport = false
 
     init(settings: UserSettings, currentPapers: [Paper]) {
         self.settings = settings
@@ -50,6 +50,9 @@ struct ImportPaperSheet: View {
                         }
                     }
                     .pickerStyle(.menu)
+                    Text("Imports continue in the background so you can keep using PaperMaster.")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
                 }
             }
             .formStyle(.grouped)
@@ -62,31 +65,29 @@ struct ImportPaperSheet: View {
                 }
 
                 ToolbarItem(placement: .confirmationAction) {
-                    Button(isImporting ? "Importing..." : "Import") {
-                        Task {
-                            isImporting = true
-                            let request = PaperCaptureRequest(
-                                sourceText: sourceText,
-                                manualTitle: manualTitle,
-                                manualAuthors: manualAuthors,
-                                manualAbstract: manualAbstract,
-                                preferredBehavior: importBehavior
-                            )
+                    Button("Import") {
+                        didSubmitImport = true
+                        let request = PaperCaptureRequest(
+                            sourceText: sourceText,
+                            manualTitle: manualTitle,
+                            manualAuthors: manualAuthors,
+                            manualAbstract: manualAbstract,
+                            preferredBehavior: importBehavior
+                        )
 
-                            if let paper = await services.importPaper(
-                                request: request,
-                                settings: settings,
-                                currentPapers: currentPapers,
-                                in: modelContext
-                            ) {
-                                router.selectedScreen = paper.status == .inbox ? .inbox : .queue
-                                router.selectedPaperID = paper.id
-                                dismiss()
-                            }
-                            isImporting = false
+                        services.startImportPaper(
+                            request: request,
+                            settings: settings,
+                            currentPapers: currentPapers,
+                            in: modelContext
+                        ) { paper in
+                            guard let paper else { return }
+                            router.selectedScreen = paper.status == .inbox ? .inbox : .queue
+                            router.selectedPaperID = paper.id
                         }
+                        dismiss()
                     }
-                    .disabled(isImporting)
+                    .disabled(didSubmitImport)
                 }
             }
         }

@@ -7,7 +7,7 @@ protocol Networking: Sendable {
 
 struct URLSessionNetworking: Networking {
     func data(from url: URL) async throws -> (Data, URLResponse) {
-        try await URLSession.shared.data(from: url)
+        try await NetworkTransport.data(from: url)
     }
 }
 
