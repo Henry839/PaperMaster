@@ -4,6 +4,7 @@ import SwiftUI
 @main
 struct PaperMasterApp: App {
     static let mainWindowID = "main"
+    static let readerWindowID = "reader"
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @State private var services: AppServices
     @State private var agentRuntime = AgentRuntimeService()
@@ -32,6 +33,15 @@ struct PaperMasterApp: App {
         })
         .modelContainer(modelContainer)
         .defaultSize(width: 1320, height: 860)
+
+        WindowGroup(id: Self.readerWindowID, for: UUID.self) { $paperID in
+            ReaderWindowRootView(paperID: paperID)
+                .environment(services)
+                .environment(router)
+        }
+        .modelContainer(modelContainer)
+        .defaultSize(width: 1280, height: 900)
+        .windowToolbarStyle(.unified)
     }
 }
 

@@ -6,6 +6,8 @@ import SwiftUI
 struct ReaderView: View {
     @AppStorage("reader.lastHighlightColor") private var lastHighlightColorRawValue = ReaderHighlightColor.yellow.rawValue
     @AppStorage("reader.elf.enabled") private var readerElfEnabled = true
+    @AppStorage("reader.displayMode") private var displayModeRawValue = ReaderDisplayMode.singleContinuous.rawValue
+    @AppStorage("reader.appearance") private var appearanceModeRawValue = ReaderAppearanceMode.normal.rawValue
     @Environment(\.modelContext) private var modelContext
     @Environment(AppServices.self) private var services
 
@@ -37,15 +39,50 @@ struct ReaderView: View {
     @State private var spotlightDismissTask: Task<Void, Never>?
     @State private var sidebarRevealCommand: ReaderSidebarRevealCommand?
     @State private var spotlightedAnnotationID: UUID?
+    @State private var currentScaleFactor: CGFloat = 1.0
+    @State private var currentPageIndex: Int = 0
+    @State private var totalPageCount: Int = 0
+    @State private var isSearchBarVisible = false
+    @State private var searchText = ""
+    @State private var searchResults: [PDFSelection] = []
+    @State private var currentSearchResultIndex: Int = 0
+    @State private var searchTask: Task<Void, Never>?
+    @State private var isGoToPagePopoverVisible = false
+    @State private var goToPageText = ""
+    @State private var isThumbnailSidebarVisible = false
+    @State private var outlineItems: [ReaderOutlineItem] = []
+    @State private var thumbnailSidebarTab: ThumbnailSidebarTab = .thumbnails
+    @State private var pdfViewReference = PDFViewReference()
+
+    private var selectedDisplayMode: ReaderDisplayMode {
+        get { ReaderDisplayMode(rawValue: displayModeRawValue) ?? .singleContinuous }
+    }
+
+    private var selectedAppearanceMode: ReaderAppearanceMode {
+        get { ReaderAppearanceMode(rawValue: appearanceModeRawValue) ?? .normal }
+    }
+
+    private var zoomPercentage: String {
+        "\(Int(currentScaleFactor * 100))%"
+    }
 
     var body: some View {
         VStack(spacing: 0) {
-            headerBar
+            readerToolbar
             Divider()
 
+            if isSearchBarVisible {
+                searchBar
+            }
+
             HSplitView {
+                if isThumbnailSidebarVisible {
+                    thumbnailSidebar
+                        .frame(minWidth: 140, idealWidth: 180, maxWidth: 220, maxHeight: .infinity)
+                }
+
                 pdfPane
-                    .frame(minWidth: 760, maxWidth: .infinity, maxHeight: .infinity)
+                    .frame(minWidth: 560, maxWidth: .infinity, maxHeight: .infinity)
 
                 if isSidebarVisible {
                     sidebar
@@ -54,11 +91,13 @@ struct ReaderView: View {
                 }
             }
         }
-        .frame(minWidth: 1_120, minHeight: 760)
         .background(Color(nsColor: .windowBackgroundColor))
         .navigationTitle(paper.title)
         .onAppear {
             syncElfEnabledState(initial: true)
+            sendPDFCommand(.setDisplayMode(selectedDisplayMode))
+            sendPDFCommand(.setAppearance(selectedAppearanceMode))
+            loadOutline()
         }
         .onChange(of: selectionState) { oldValue, newValue in
             guard oldValue != newValue else { return }
@@ -87,18 +126,32 @@ struct ReaderView: View {
         .onDisappear {
             flushPendingSave()
             askAITask?.cancel()
+            searchTask?.cancel()
             cancelElfWork(clearBubble: true)
             spotlightDismissTask?.cancel()
             askAISession.reset()
         }
     }
 
-    private var headerBar: some View {
-        HStack(spacing: 14) {
-            VStack(alignment: .leading, spacing: 4) {
-                Text(paper.title)
-                    .font(.headline)
-                    .lineLimit(1)
+    private var readerToolbar: some View {
+        HStack(spacing: 8) {
+            // Left group: thumbnail sidebar, elf, annotations
+            HStack(spacing: 8) {
+                Button {
+                    isThumbnailSidebarVisible.toggle()
+                } label: {
+                    Image(systemName: "sidebar.left")
+                }
+                .buttonStyle(.borderless)
+                .help("Toggle page thumbnails")
+
+                Toggle(isOn: $readerElfEnabled) {
+                    Label("Elf", systemImage: readerElfEnabled ? "sparkles" : "moon.zzz")
+                        .font(.subheadline.weight(.medium))
+                }
+                .toggleStyle(.switch)
+                .controlSize(.mini)
+
                 Text("\(sortedAnnotations.count) annotation\(sortedAnnotations.count == 1 ? "" : "s")")
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -106,42 +159,358 @@ struct ReaderView: View {
 
             Spacer()
 
-            Toggle(isOn: $readerElfEnabled) {
-                Label("Elf", systemImage: readerElfEnabled ? "sparkles" : "moon.zzz")
-                    .font(.subheadline.weight(.semibold))
-            }
-            .toggleStyle(.switch)
+            // Center group: zoom + page navigation
+            HStack(spacing: 4) {
+                Button {
+                    sendPDFCommand(.zoomOut)
+                } label: {
+                    Image(systemName: "minus.magnifyingglass")
+                }
+                .buttonStyle(.borderless)
+                .keyboardShortcut("-", modifiers: [.command])
+                .help("Zoom out")
 
-            Button(isSidebarVisible ? "Hide Sidebar" : "Show Sidebar", systemImage: isSidebarVisible ? "sidebar.right" : "sidebar.right") {
-                withAnimation(.snappy(duration: 0.22)) {
-                    isSidebarVisible.toggle()
-                    if isSidebarVisible == false {
-                        focusedField = nil
+                Button(zoomPercentage) {
+                    sendPDFCommand(.zoomToFit)
+                }
+                .buttonStyle(.borderless)
+                .monospacedDigit()
+                .font(.caption.weight(.medium))
+                .help("Fit to width")
+
+                Button {
+                    sendPDFCommand(.zoomIn)
+                } label: {
+                    Image(systemName: "plus.magnifyingglass")
+                }
+                .buttonStyle(.borderless)
+                .keyboardShortcut("=", modifiers: [.command])
+                .help("Zoom in")
+
+                Divider()
+                    .frame(height: 16)
+                    .padding(.horizontal, 4)
+
+                Button {
+                    sendPDFCommand(.goToPreviousPage)
+                } label: {
+                    Image(systemName: "chevron.up")
+                }
+                .buttonStyle(.borderless)
+                .disabled(currentPageIndex <= 0)
+                .help("Previous page")
+
+                Button {
+                    isGoToPagePopoverVisible.toggle()
+                    goToPageText = "\(currentPageIndex + 1)"
+                } label: {
+                    Text("Page \(currentPageIndex + 1) / \(totalPageCount)")
+                        .monospacedDigit()
+                        .font(.caption.weight(.medium))
+                }
+                .buttonStyle(.borderless)
+                .popover(isPresented: $isGoToPagePopoverVisible) {
+                    goToPagePopover
+                }
+                .help("Go to page")
+
+                Button {
+                    sendPDFCommand(.goToNextPage)
+                } label: {
+                    Image(systemName: "chevron.down")
+                }
+                .buttonStyle(.borderless)
+                .disabled(currentPageIndex >= totalPageCount - 1)
+                .help("Next page")
+            }
+
+            Spacer()
+
+            // Right group: search, display, appearance, sidebar
+            HStack(spacing: 8) {
+                Button {
+                    isSearchBarVisible.toggle()
+                    if isSearchBarVisible == false {
+                        clearSearch()
                     }
+                } label: {
+                    Image(systemName: "magnifyingglass")
+                }
+                .buttonStyle(.borderless)
+                .keyboardShortcut("f", modifiers: [.command])
+                .help("Search in document")
+
+                Menu {
+                    ForEach(ReaderDisplayMode.allCases) { mode in
+                        Button {
+                            displayModeRawValue = mode.rawValue
+                            sendPDFCommand(.setDisplayMode(mode))
+                        } label: {
+                            if selectedDisplayMode == mode {
+                                Label(mode.label, systemImage: "checkmark")
+                            } else {
+                                Text(mode.label)
+                            }
+                        }
+                    }
+                } label: {
+                    Image(systemName: selectedDisplayMode.systemImage)
+                }
+                .menuStyle(.borderlessButton)
+                .fixedSize()
+                .help("Display mode")
+
+                Menu {
+                    ForEach(ReaderAppearanceMode.allCases) { mode in
+                        Button {
+                            appearanceModeRawValue = mode.rawValue
+                            sendPDFCommand(.setAppearance(mode))
+                        } label: {
+                            if selectedAppearanceMode == mode {
+                                Label(mode.label, systemImage: "checkmark")
+                            } else {
+                                Text(mode.label)
+                            }
+                        }
+                    }
+                } label: {
+                    Image(systemName: selectedAppearanceMode.systemImage)
+                }
+                .menuStyle(.borderlessButton)
+                .fixedSize()
+                .help("Reading mode")
+
+                Button {
+                    withAnimation(.snappy(duration: 0.22)) {
+                        isSidebarVisible.toggle()
+                        if isSidebarVisible == false {
+                            focusedField = nil
+                        }
+                    }
+                } label: {
+                    Label(isSidebarVisible ? "Hide Sidebar" : "Show Sidebar", systemImage: "sidebar.right")
+                        .font(.subheadline.weight(.medium))
+                }
+                .keyboardShortcut("\\", modifiers: [.command])
+            }
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 8)
+        .background(.bar)
+    }
+
+    private var searchBar: some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 10) {
+                Image(systemName: "magnifyingglass")
+                    .foregroundStyle(.secondary)
+
+                TextField("Search in document...", text: $searchText)
+                    .textFieldStyle(.plain)
+                    .onSubmit {
+                        performSearch()
+                    }
+                    .onChange(of: searchText) { _, newValue in
+                        searchTask?.cancel()
+                        searchTask = Task { @MainActor in
+                            try? await Task.sleep(nanoseconds: 300_000_000)
+                            guard Task.isCancelled == false else { return }
+                            performSearch()
+                        }
+                    }
+
+                if searchResults.isEmpty == false {
+                    Text("\(currentSearchResultIndex + 1) of \(searchResults.count)")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .monospacedDigit()
+
+                    Button {
+                        navigateSearchResult(forward: false)
+                    } label: {
+                        Image(systemName: "chevron.up")
+                    }
+                    .buttonStyle(.plain)
+                    .keyboardShortcut("g", modifiers: [.command, .shift])
+
+                    Button {
+                        navigateSearchResult(forward: true)
+                    } label: {
+                        Image(systemName: "chevron.down")
+                    }
+                    .buttonStyle(.plain)
+                    .keyboardShortcut("g", modifiers: [.command])
+                } else if searchText.isEmpty == false {
+                    Text("No results")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+
+                Button {
+                    isSearchBarVisible = false
+                    clearSearch()
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .foregroundStyle(.secondary)
+                }
+                .buttonStyle(.plain)
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 8)
+            .background(.bar)
+            Divider()
+        }
+    }
+
+    private var goToPagePopover: some View {
+        HStack(spacing: 8) {
+            TextField("Page", text: $goToPageText)
+                .textFieldStyle(.roundedBorder)
+                .frame(width: 70)
+                .onSubmit {
+                    submitGoToPage()
+                }
+
+            Text("of \(totalPageCount)")
+                .font(.callout)
+                .foregroundStyle(.secondary)
+
+            Button("Go") {
+                submitGoToPage()
+            }
+            .keyboardShortcut(.defaultAction)
+        }
+        .padding(12)
+    }
+
+    private var thumbnailSidebar: some View {
+        VStack(spacing: 0) {
+            if outlineItems.isEmpty == false {
+                Picker("", selection: $thumbnailSidebarTab) {
+                    Text("Pages").tag(ThumbnailSidebarTab.thumbnails)
+                    Text("Outline").tag(ThumbnailSidebarTab.outline)
+                }
+                .pickerStyle(.segmented)
+                .padding(8)
+            }
+
+            if thumbnailSidebarTab == .outline, outlineItems.isEmpty == false {
+                outlineView
+            } else {
+                ReaderThumbnailView(pdfViewReference: pdfViewReference)
+            }
+        }
+        .background(Color(nsColor: .controlBackgroundColor))
+    }
+
+    private var outlineView: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 2) {
+                ForEach(ReaderOutlineItem.flatten(outlineItems)) { item in
+                    Button {
+                        if let destination = item.destination,
+                           let page = destination.page,
+                           let document = pdfViewReference.pdfView?.document {
+                            let pageIndex = document.index(for: page)
+                            sendPDFCommand(.goToPage(pageIndex))
+                        }
+                    } label: {
+                        Text(item.title)
+                            .font(.callout)
+                            .lineLimit(2)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.leading, CGFloat(item.indentLevel) * 12)
+                            .padding(.vertical, 4)
+                            .padding(.horizontal, 8)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
                 }
             }
-            .keyboardShortcut("\\", modifiers: [.command])
+            .padding(.vertical, 4)
         }
-        .padding(.horizontal, 20)
-        .padding(.vertical, 14)
-        .background(.bar)
+    }
+
+    private func performSearch() {
+        guard searchText.isEmpty == false else {
+            clearSearch()
+            return
+        }
+        sendPDFCommand(.search(searchText))
+        currentSearchResultIndex = 0
+    }
+
+    private func navigateSearchResult(forward: Bool) {
+        guard searchResults.isEmpty == false else { return }
+        if forward {
+            currentSearchResultIndex = (currentSearchResultIndex + 1) % searchResults.count
+        } else {
+            currentSearchResultIndex = (currentSearchResultIndex - 1 + searchResults.count) % searchResults.count
+        }
+        sendPDFCommand(.highlightSearchResult(currentSearchResultIndex))
+    }
+
+    private func clearSearch() {
+        searchText = ""
+        searchResults = []
+        currentSearchResultIndex = 0
+        sendPDFCommand(.clearSearch)
+    }
+
+    private func submitGoToPage() {
+        if let pageNumber = Int(goToPageText), pageNumber >= 1, pageNumber <= totalPageCount {
+            sendPDFCommand(.goToPage(pageNumber - 1))
+            isGoToPagePopoverVisible = false
+        }
+    }
+
+    private func loadOutline() {
+        // The PDF may not be loaded yet on first appear, so retry briefly
+        Task { @MainActor in
+            for _ in 0..<10 {
+                if let pdfView = pdfViewReference.pdfView,
+                   let document = pdfView.document,
+                   let outlineRoot = document.outlineRoot {
+                    outlineItems = ReaderOutlineItem.extract(from: outlineRoot)
+                    return
+                }
+                try? await Task.sleep(nanoseconds: 100_000_000)
+            }
+            outlineItems = []
+        }
     }
 
     private var pdfPane: some View {
         ZStack(alignment: .topTrailing) {
-            ReaderPDFView(
-                url: fileURL,
-                annotations: sortedAnnotations,
-                selectionState: $selectionState,
-                focusPassage: $focusPassage,
-                overlayTargetPassage: elfOverlayTargetPassage,
-                overlayCaptureToken: elfOverlayCaptureToken,
-                overlayGeometry: $elfOverlayGeometry,
-                overlayViewportActivityAt: $elfOverlayViewportActivityAt,
-                underlinePresentation: elfUnderlinePresentation,
-                command: pdfCommand,
-                onAnnotationDoubleClick: revealAnnotation
-            )
+            ZStack {
+                ReaderPDFView(
+                    url: fileURL,
+                    annotations: sortedAnnotations,
+                    selectionState: $selectionState,
+                    focusPassage: $focusPassage,
+                    overlayTargetPassage: elfOverlayTargetPassage,
+                    overlayCaptureToken: elfOverlayCaptureToken,
+                    overlayGeometry: $elfOverlayGeometry,
+                    overlayViewportActivityAt: $elfOverlayViewportActivityAt,
+                    underlinePresentation: elfUnderlinePresentation,
+                    command: pdfCommand,
+                    onAnnotationDoubleClick: revealAnnotation,
+                    currentScaleFactor: $currentScaleFactor,
+                    currentPageIndex: $currentPageIndex,
+                    totalPageCount: $totalPageCount,
+                    searchResults: $searchResults,
+                    pdfViewReference: pdfViewReference
+                )
+
+                if let appearanceOverlayColor = selectedAppearanceMode.overlayTintColor {
+                    // Multiply tint makes the PDF paper warm without washing out black text.
+                    Rectangle()
+                        .fill(Color(nsColor: appearanceOverlayColor))
+                        .blendMode(.multiply)
+                        .allowsHitTesting(false)
+                }
+            }
+            .compositingGroup()
             .background(Color.black.opacity(0.02))
 
             ReaderElfPaneOverlayView(
@@ -1425,6 +1794,140 @@ private enum ReaderPDFCommandKind: Equatable {
     case clearSelection
     case jumpToAnnotation(UUID)
     case jumpToPassage(ReaderPassageJumpTarget)
+    case zoomIn
+    case zoomOut
+    case zoomToFit
+    case goToPage(Int)
+    case goToNextPage
+    case goToPreviousPage
+    case setDisplayMode(ReaderDisplayMode)
+    case setAppearance(ReaderAppearanceMode)
+    case search(String)
+    case highlightSearchResult(Int)
+    case clearSearch
+}
+
+enum ReaderDisplayMode: String, CaseIterable, Identifiable {
+    case singlePage
+    case singleContinuous
+    case twoPage
+    case twoPageContinuous
+
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .singlePage: return "Single Page"
+        case .singleContinuous: return "Continuous"
+        case .twoPage: return "Two Pages"
+        case .twoPageContinuous: return "Two-Up Continuous"
+        }
+    }
+
+    var systemImage: String {
+        switch self {
+        case .singlePage: return "doc"
+        case .singleContinuous: return "doc.text"
+        case .twoPage: return "book"
+        case .twoPageContinuous: return "book.pages"
+        }
+    }
+
+    var pdfDisplayMode: PDFDisplayMode {
+        switch self {
+        case .singlePage: return .singlePage
+        case .singleContinuous: return .singlePageContinuous
+        case .twoPage: return .twoUp
+        case .twoPageContinuous: return .twoUpContinuous
+        }
+    }
+}
+
+enum ReaderAppearanceMode: String, CaseIterable, Identifiable {
+    case normal
+    case sepia
+    case dark
+
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .normal: return "Normal"
+        case .sepia: return "Sepia"
+        case .dark: return "Dark"
+        }
+    }
+
+    var systemImage: String {
+        switch self {
+        case .normal: return "sun.max"
+        case .sepia: return "sun.dust"
+        case .dark: return "moon"
+        }
+    }
+
+    var pdfBackgroundColor: NSColor {
+        switch self {
+        case .normal:
+            return .windowBackgroundColor
+        case .sepia:
+            return NSColor(red: 0.96, green: 0.92, blue: 0.84, alpha: 1.0)
+        case .dark:
+            return NSColor(white: 0.15, alpha: 1.0)
+        }
+    }
+
+    var overlayTintColor: NSColor? {
+        switch self {
+        case .sepia:
+            return NSColor(red: 0.94, green: 0.87, blue: 0.72, alpha: 0.78)
+        case .normal, .dark:
+            return nil
+        }
+    }
+}
+
+private struct ReaderOutlineItem: Identifiable {
+    let id = UUID()
+    let title: String
+    let destination: PDFDestination?
+    let indentLevel: Int
+    let children: [ReaderOutlineItem]
+
+    static func extract(from outline: PDFOutline?, level: Int = 0) -> [ReaderOutlineItem] {
+        guard let outline else { return [] }
+        var items: [ReaderOutlineItem] = []
+        for i in 0..<outline.numberOfChildren {
+            guard let child = outline.child(at: i) else { continue }
+            let childItems = extract(from: child, level: level + 1)
+            items.append(ReaderOutlineItem(
+                title: child.label ?? "Untitled",
+                destination: child.destination,
+                indentLevel: level,
+                children: childItems
+            ))
+        }
+        return items
+    }
+
+    static func flatten(_ items: [ReaderOutlineItem]) -> [ReaderOutlineItem] {
+        var result: [ReaderOutlineItem] = []
+        for item in items {
+            result.append(item)
+            result.append(contentsOf: flatten(item.children))
+        }
+        return result
+    }
+}
+
+private enum ThumbnailSidebarTab: String, CaseIterable {
+    case thumbnails
+    case outline
+}
+
+@MainActor
+final class PDFViewReference: ObservableObject {
+    weak var pdfView: PDFView?
 }
 
 private struct ReaderPDFView: NSViewRepresentable {
@@ -1439,6 +1942,11 @@ private struct ReaderPDFView: NSViewRepresentable {
     let underlinePresentation: ReaderElfUnderlinePresentationState?
     let command: ReaderPDFCommand?
     let onAnnotationDoubleClick: (UUID) -> Void
+    @Binding var currentScaleFactor: CGFloat
+    @Binding var currentPageIndex: Int
+    @Binding var totalPageCount: Int
+    @Binding var searchResults: [PDFSelection]
+    let pdfViewReference: PDFViewReference
 
     func makeCoordinator() -> Coordinator {
         Coordinator(
@@ -1449,7 +1957,11 @@ private struct ReaderPDFView: NSViewRepresentable {
             overlayTargetPassage: overlayTargetPassage,
             overlayCaptureToken: overlayCaptureToken,
             underlinePresentation: underlinePresentation,
-            onAnnotationDoubleClick: onAnnotationDoubleClick
+            onAnnotationDoubleClick: onAnnotationDoubleClick,
+            scaleFactorBinding: $currentScaleFactor,
+            pageIndexBinding: $currentPageIndex,
+            pageCountBinding: $totalPageCount,
+            searchResultsBinding: $searchResults
         )
     }
 
@@ -1467,6 +1979,7 @@ private struct ReaderPDFView: NSViewRepresentable {
         context.coordinator.loadDocumentIfNeeded(from: url, into: view)
         context.coordinator.reconcileAnnotations(annotations, in: view)
         context.coordinator.updateOverlayGeometry(in: view)
+        pdfViewReference.pdfView = view
         return view
     }
 
@@ -1480,6 +1993,10 @@ private struct ReaderPDFView: NSViewRepresentable {
         context.coordinator.overlayCaptureToken = overlayCaptureToken
         context.coordinator.underlinePresentation = underlinePresentation
         context.coordinator.onAnnotationDoubleClick = onAnnotationDoubleClick
+        context.coordinator.scaleFactorBinding = $currentScaleFactor
+        context.coordinator.pageIndexBinding = $currentPageIndex
+        context.coordinator.pageCountBinding = $totalPageCount
+        context.coordinator.searchResultsBinding = $searchResults
         nsView.annotationDoubleClickHandler = { annotationID in
             context.coordinator.handleAnnotationDoubleClick(annotationID)
         }
@@ -1488,6 +2005,7 @@ private struct ReaderPDFView: NSViewRepresentable {
         context.coordinator.updateUnderlinePresentation(in: nsView)
         context.coordinator.updateOverlayGeometry(in: nsView)
         context.coordinator.apply(command: command, annotations: annotations, in: nsView)
+        pdfViewReference.pdfView = nsView
     }
 
     final class InteractivePDFView: PDFView {
@@ -1529,6 +2047,10 @@ private struct ReaderPDFView: NSViewRepresentable {
         var overlayCaptureToken: UUID
         var underlinePresentation: ReaderElfUnderlinePresentationState?
         var onAnnotationDoubleClick: (UUID) -> Void
+        var scaleFactorBinding: Binding<CGFloat>
+        var pageIndexBinding: Binding<Int>
+        var pageCountBinding: Binding<Int>
+        var searchResultsBinding: Binding<[PDFSelection]>
         private weak var observedPDFView: PDFView?
         private weak var observedViewportClipView: NSClipView?
         private var loadedURL: URL?
@@ -1544,7 +2066,11 @@ private struct ReaderPDFView: NSViewRepresentable {
             overlayTargetPassage: ReaderFocusPassageSnapshot?,
             overlayCaptureToken: UUID,
             underlinePresentation: ReaderElfUnderlinePresentationState?,
-            onAnnotationDoubleClick: @escaping (UUID) -> Void
+            onAnnotationDoubleClick: @escaping (UUID) -> Void,
+            scaleFactorBinding: Binding<CGFloat>,
+            pageIndexBinding: Binding<Int>,
+            pageCountBinding: Binding<Int>,
+            searchResultsBinding: Binding<[PDFSelection]>
         ) {
             self.selectionBinding = selectionBinding
             self.focusPassageBinding = focusPassageBinding
@@ -1554,6 +2080,10 @@ private struct ReaderPDFView: NSViewRepresentable {
             self.overlayCaptureToken = overlayCaptureToken
             self.underlinePresentation = underlinePresentation
             self.onAnnotationDoubleClick = onAnnotationDoubleClick
+            self.scaleFactorBinding = scaleFactorBinding
+            self.pageIndexBinding = pageIndexBinding
+            self.pageCountBinding = pageCountBinding
+            self.searchResultsBinding = searchResultsBinding
         }
 
         deinit {
@@ -1577,6 +2107,18 @@ private struct ReaderPDFView: NSViewRepresentable {
                     name: Notification.Name.PDFViewVisiblePagesChanged,
                     object: pdfView
                 )
+                NotificationCenter.default.addObserver(
+                    self,
+                    selector: #selector(handleScaleChanged(_:)),
+                    name: Notification.Name.PDFViewScaleChanged,
+                    object: pdfView
+                )
+                NotificationCenter.default.addObserver(
+                    self,
+                    selector: #selector(handlePageChanged(_:)),
+                    name: Notification.Name.PDFViewPageChanged,
+                    object: pdfView
+                )
             }
 
             observeViewportClipViewIfNeeded(in: pdfView)
@@ -1590,6 +2132,9 @@ private struct ReaderPDFView: NSViewRepresentable {
             selectionBinding.wrappedValue = .none
             focusPassageBinding.wrappedValue = ReaderFocusPassageExtractor.passage(in: pdfView)
             underlineOverlayProvider.reset()
+            pageCountBinding.wrappedValue = pdfView.document?.pageCount ?? 0
+            scaleFactorBinding.wrappedValue = pdfView.scaleFactor
+            syncCurrentPageIndex(in: pdfView)
             updateUnderlinePresentation(in: pdfView)
             updateOverlayGeometry(in: pdfView)
         }
@@ -1647,7 +2192,78 @@ private struct ReaderPDFView: NSViewRepresentable {
                 jump(to: annotationID, annotations: annotations, in: pdfView)
             case let .jumpToPassage(target):
                 jump(to: target, in: pdfView)
+            case .zoomIn:
+                pdfView.autoScales = false
+                pdfView.scaleFactor = min(pdfView.scaleFactor * 1.25, 8.0)
+            case .zoomOut:
+                pdfView.autoScales = false
+                pdfView.scaleFactor = max(pdfView.scaleFactor / 1.25, 0.1)
+            case .zoomToFit:
+                pdfView.autoScales = true
+            case let .goToPage(pageIndex):
+                if let page = pdfView.document?.page(at: pageIndex) {
+                    pdfView.go(to: page)
+                }
+            case .goToNextPage:
+                pdfView.goToNextPage(nil)
+            case .goToPreviousPage:
+                pdfView.goToPreviousPage(nil)
+            case let .setDisplayMode(mode):
+                pdfView.displayMode = mode.pdfDisplayMode
+            case let .setAppearance(mode):
+                applyAppearance(mode, to: pdfView)
+            case let .search(text):
+                performSearch(text, in: pdfView)
+            case let .highlightSearchResult(index):
+                highlightSearchResult(at: index, in: pdfView)
+            case .clearSearch:
+                pdfView.highlightedSelections = nil
+                searchResultsBinding.wrappedValue = []
             }
+        }
+
+        private func applyAppearance(_ mode: ReaderAppearanceMode, to pdfView: PDFView) {
+            pdfView.wantsLayer = true
+            pdfView.layer?.filters = nil
+            pdfView.layer?.backgroundFilters = nil
+            pdfView.backgroundColor = mode.pdfBackgroundColor
+
+            switch mode {
+            case .normal, .sepia:
+                break
+            case .dark:
+                if let invertFilter = CIFilter(name: "CIColorInvert") {
+                    pdfView.layer?.filters = [invertFilter]
+                }
+            }
+        }
+
+        private func performSearch(_ text: String, in pdfView: PDFView) {
+            guard let document = pdfView.document, text.isEmpty == false else {
+                pdfView.highlightedSelections = nil
+                searchResultsBinding.wrappedValue = []
+                return
+            }
+            let results = document.findString(text, withOptions: [.caseInsensitive])
+            searchResultsBinding.wrappedValue = results
+            pdfView.highlightedSelections = results
+            if let first = results.first {
+                pdfView.setCurrentSelection(first, animate: true)
+                pdfView.scrollSelectionToVisible(nil)
+            }
+        }
+
+        private func highlightSearchResult(at index: Int, in pdfView: PDFView) {
+            let results = searchResultsBinding.wrappedValue
+            guard index >= 0, index < results.count else { return }
+            pdfView.setCurrentSelection(results[index], animate: true)
+            pdfView.scrollSelectionToVisible(nil)
+        }
+
+        private func syncCurrentPageIndex(in pdfView: PDFView) {
+            guard let currentPage = pdfView.currentPage,
+                  let document = pdfView.document else { return }
+            pageIndexBinding.wrappedValue = document.index(for: currentPage)
         }
 
         private func jump(to annotationID: UUID, annotations: [PaperAnnotation], in pdfView: PDFView) {
@@ -1835,6 +2451,38 @@ private struct ReaderPDFView: NSViewRepresentable {
             }
 
             handleViewportChanged(in: pdfView)
+        }
+
+        @objc
+        private func handleScaleChanged(_ notification: Notification) {
+            guard let pdfView = notification.object as? PDFView else { return }
+            scaleFactorBinding.wrappedValue = pdfView.scaleFactor
+        }
+
+        @objc
+        private func handlePageChanged(_ notification: Notification) {
+            guard let pdfView = notification.object as? PDFView else { return }
+            syncCurrentPageIndex(in: pdfView)
+        }
+    }
+}
+
+private struct ReaderThumbnailView: NSViewRepresentable {
+    let pdfViewReference: PDFViewReference
+
+    func makeNSView(context: Context) -> PDFThumbnailView {
+        let thumbnailView = PDFThumbnailView()
+        thumbnailView.thumbnailSize = CGSize(width: 120, height: 160)
+        thumbnailView.backgroundColor = .controlBackgroundColor
+        if let pdfView = pdfViewReference.pdfView {
+            thumbnailView.pdfView = pdfView
+        }
+        return thumbnailView
+    }
+
+    func updateNSView(_ nsView: PDFThumbnailView, context: Context) {
+        if nsView.pdfView !== pdfViewReference.pdfView {
+            nsView.pdfView = pdfViewReference.pdfView
         }
     }
 }

@@ -10,6 +10,7 @@ private let queueDragAnimation = Animation.interactiveSpring(
 
 struct AppRootView: View {
     @Environment(\.modelContext) private var modelContext
+    @Environment(\.openWindow) private var openWindow
     @Environment(AppServices.self) private var services
     @Environment(AgentRuntimeService.self) private var agentRuntime
     @Environment(AppRouter.self) private var router
@@ -63,11 +64,8 @@ struct AppRootView: View {
         )
     }
 
-    private var readerPresentationBinding: Binding<ReaderPresentation?> {
-        Binding(
-            get: { router.readerPresentation },
-            set: { router.readerPresentation = $0 }
-        )
+    private func openReaderWindow(for presentation: ReaderPresentation) {
+        openWindow(id: PaperMasterApp.readerWindowID, value: presentation.paperID)
     }
 
     private var displayedPapers: [Paper] {
@@ -142,7 +140,10 @@ struct AppRootView: View {
             .sheet(isPresented: feedbackSheetBinding) {
                 FeedbackCaptureSheet(snapshot: feedbackSnapshot)
             }
-            .sheet(item: readerPresentationBinding, content: readerSheet)
+            .onChange(of: router.readerPresentation?.id) { _, newID in
+                guard let presentation = router.readerPresentation else { return }
+                openReaderWindow(for: presentation)
+            }
             .toolbar {
                 toolbarContent
             }
@@ -209,24 +210,6 @@ struct AppRootView: View {
             settings.paperStorageMode.rawValue,
             settings.customPaperStoragePath
         ].joined(separator: "|")
-    }
-
-    @ViewBuilder
-    private func readerSheet(for presentation: ReaderPresentation) -> some View {
-        if let paper = papers.first(where: { $0.id == presentation.paperID }),
-           let settings {
-            ReaderView(paper: paper, fileURL: presentation.fileURL, settings: settings)
-        } else if papers.contains(where: { $0.id == presentation.paperID }) {
-            ProgressView()
-                .frame(minWidth: 720, minHeight: 520)
-        } else {
-            ContentUnavailableView(
-                "Paper unavailable",
-                systemImage: "doc.slash",
-                description: Text("This paper is no longer available in the local library.")
-            )
-            .frame(minWidth: 720, minHeight: 520)
-        }
     }
 
     private var navigationView: some View {
