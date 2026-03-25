@@ -78,9 +78,25 @@ Services depend on protocols, not concrete types. Key protocol families:
 
 **Navigation**: `AppRouter` holds the selected `AppScreen` enum value (today, inbox, queue, library, hot, fusionReactor, settings) and selected paper. `AppRootView` filters/sorts papers per screen.
 
+### Multi-Window & Environment Injection
+
+The app uses SwiftUI's `@Observable` + `@Environment` pattern (not the older `@EnvironmentObject`). `AppServices`, `AppRouter`, and `AgentRuntimeService` are injected at the window root and accessed in views via `@Environment(AppServices.self)`.
+
+Two `WindowGroup` scenes are defined in `PaperMasterApp`:
+- **Main window** (`"main"`) — `AppRootView` with sidebar, paper list, and detail panel.
+- **Reader window** (`"reader"`) — opened via `openWindow(id: "reader", value: paper.id)`. `AppRouter.readerPresentation` must be set before the call so `ReaderWindowRootView` can resolve the paper and file URL.
+
 ### Agent Integration
 
 `AgentRuntimeService` embeds a SwiftTerm terminal. On launch it bootstraps an agent workspace with standardized directories and environment variables (`PAPERMASTER_AGENT_WORKSPACE`, `PAPERMASTER_AGENT_IMPORT_DIR`, `PAPERMASTER_AGENT_EXPORTS_DIR`, `PAPERMASTER_AGENT_SKILLS_DIR`). `AgentToolBridge` bridges agent commands back into the app (e.g., importing a paper). The app watches the import directory and auto-ingests PDFs placed there.
+
+### SwiftData Schema
+
+The `ModelContainer` must register all six model types: `Paper`, `PaperCard`, `PaperAnnotation`, `Tag`, `UserSettings`, `FeedbackEntry`. Tests use `TestSupport.makeInMemoryContainer()` which does this. Forgetting a type causes runtime crashes.
+
+### Feature Naming
+
+"Paper Elf" (the UI name for the proactive reader critique feature) maps to `ReaderCompanion*` in code — `ReaderCompanionService`, `ReaderCompanionGenerating` protocol, `ReaderCompanionOutput` model, `ReaderElfViews` (view layer). The elf/companion naming split is intentional: elf is user-facing, companion is the code abstraction.
 
 ## Coding Conventions
 
@@ -96,6 +112,7 @@ Services depend on protocols, not concrete types. Key protocol families:
 - Shared fakes/fixtures live in `TestSupport.swift` — extend it instead of duplicating scaffolding
 - Spy and stub implementations (e.g., `SpyPaperTagger`, `DelayedMetadataResolver`) for deterministic testing
 - Add or update tests for service logic, persistence changes, and import/scheduling flows before changing dependent UI
+- Test doubles follow a naming convention: `Stub*` (canned return values), `Spy*` (records calls for assertions), `Fake*` (working in-memory implementations), `Recording*` (captures invocations). All live in `TestSupport.swift`
 
 ## Commit Style
 

@@ -77,6 +77,7 @@ struct ReaderAskAISessionState: Equatable {
     var draft: ReaderAskAIDraft?
     var exchanges: [ReaderAskAIExchange] = []
     var isAwaitingResponse = false
+    var lastExchangeID: UUID?
 
     var canSubmit: Bool {
         guard let draft else { return false }
@@ -86,6 +87,7 @@ struct ReaderAskAISessionState: Equatable {
     mutating func capture(selection: ReaderSelectionSnapshot) {
         guard draft?.selection != selection else { return }
         draft = ReaderAskAIDraft(selection: selection)
+        lastExchangeID = nil
     }
 
     mutating func updateQuestion(_ question: String) {
@@ -111,8 +113,10 @@ struct ReaderAskAISessionState: Equatable {
 
     mutating func finishRequest(with draft: ReaderAskAIDraft, answer: String, askedAt: Date = .now) {
         isAwaitingResponse = false
+        let exchangeID = UUID()
         exchanges.insert(
             ReaderAskAIExchange(
+                id: exchangeID,
                 quotedText: draft.selection.quotedText,
                 pageNumber: draft.selection.pageNumber,
                 question: draft.trimmedQuestion,
@@ -121,6 +125,7 @@ struct ReaderAskAISessionState: Equatable {
             ),
             at: 0
         )
+        lastExchangeID = exchangeID
     }
 
     mutating func failRequest() {

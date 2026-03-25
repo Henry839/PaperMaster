@@ -19,11 +19,7 @@ struct ReaderPassageJumpTarget: Equatable, Sendable {
     }
 
     var targetRect: CGRect {
-        let union = rects
-            .map(\.cgRect)
-            .reduce(CGRect.null) { partialResult, rect in
-                partialResult.isNull ? rect : partialResult.union(rect)
-            }
+        let union = rects.map(\.cgRect).unionRect
         guard union.isNull == false else {
             return CGRect(origin: focusPoint, size: .zero)
         }
@@ -416,16 +412,14 @@ struct ReaderElfGeometrySnapshot: Equatable {
         let lineFrames = passage.rects
             .map(\.cgRect)
             .map { pdfView.convert($0, from: page).standardized }
-            .map { convertToTopLeading($0, within: paneBounds.height) }
+            .map { $0.convertedToTopLeading(within: paneBounds.height) }
             .filter { $0.width > 0.01 && $0.height > 0.01 }
-        let anchorRect = lineFrames.reduce(CGRect.null) { partialResult, rect in
-            partialResult.isNull ? rect : partialResult.union(rect)
-        }
+        let anchorRect = lineFrames.unionRect
 
         return ReaderElfGeometrySnapshot(
             passageKey: passage.normalizedKey,
             paneBounds: paneBounds,
-            pageFrame: convertToTopLeading(pageRect, within: paneBounds.height),
+            pageFrame: pageRect.convertedToTopLeading(within: paneBounds.height),
             anchorFrame: anchorRect.isNull ? nil : anchorRect.standardized,
             passageLineFrames: lineFrames
         )
@@ -447,14 +441,6 @@ struct ReaderElfGeometrySnapshot: Equatable {
         return clippedAnchorFrame.standardized
     }
 
-    private static func convertToTopLeading(_ rect: CGRect, within containerHeight: CGFloat) -> CGRect {
-        CGRect(
-            x: rect.minX,
-            y: containerHeight - rect.maxY,
-            width: rect.width,
-            height: rect.height
-        ).standardized
-    }
 }
 
 struct ReaderElfPresentationState: Equatable {
