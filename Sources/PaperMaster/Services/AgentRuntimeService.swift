@@ -1,8 +1,12 @@
-import Darwin
+import CoreGraphics
 import Foundation
-import AppKit
 import Observation
+
+#if os(macOS)
+import Darwin
+import AppKit
 import SwiftTerm
+#endif
 
 struct AgentWorkspacePaths: Equatable, Sendable {
     let rootDirectoryURL: URL
@@ -248,6 +252,7 @@ enum AgentToolCatalog {
     ]
 }
 
+#if os(macOS)
 enum AgentTerminalSessionState: String, Sendable {
     case launching
     case running
@@ -730,3 +735,138 @@ private func makeSpawnEnvironment<Result>(
         body(buffer.baseAddress!)
     }
 }
+#else
+enum AgentTerminalSessionState: String, Sendable {
+    case launching
+    case running
+    case exited
+    case failed
+}
+
+@MainActor
+@Observable
+final class AgentTerminalSession: Identifiable {
+    let id = UUID()
+    let index: Int
+    let workingDirectoryURL: URL
+    let shellPath: String
+    let shellArguments: [String]
+    var title: String
+    var transcript: String
+    var state: AgentTerminalSessionState
+    var launchedAt: Date
+    var exitStatus: Int32?
+    var lastErrorMessage: String?
+
+    init(
+        index: Int,
+        workingDirectoryURL: URL,
+        shellPath: String = "/bin/zsh",
+        shellArguments: [String] = ["-l"]
+    ) {
+        self.index = index
+        self.workingDirectoryURL = workingDirectoryURL
+        self.shellPath = shellPath
+        self.shellArguments = shellArguments
+        self.title = "Terminal \(index)"
+        self.transcript = ""
+        self.state = .failed
+        self.launchedAt = .now
+    }
+}
+
+@MainActor
+@Observable
+final class EmbeddedTerminalSession: Identifiable {
+    let id = UUID()
+    let index: Int
+    let workingDirectoryURL: URL
+    let environment: [String: String]
+    var title: String
+    var currentDirectoryPath: String?
+    var didStart = false
+
+    init(index: Int, workingDirectoryURL: URL, environment: [String: String]) {
+        self.index = index
+        self.workingDirectoryURL = workingDirectoryURL
+        self.environment = environment
+        self.title = "Terminal \(index)"
+    }
+
+    func terminate() {}
+}
+
+@MainActor
+@Observable
+final class AgentRuntimeService {
+    let workspacePaths: AgentWorkspacePaths
+    let toolCatalog: [AgentToolDefinition]
+
+    @ObservationIgnored private let fileManager: FileManager
+
+    var sessions: [AgentTerminalSession] = []
+    var selectedSessionID: UUID?
+    var preferredPermissionLevel: AgentToolPermissionLevel = .libraryWrite
+    var lastBootstrapErrorMessage: String?
+    var isPanelVisible = false
+    var panelHeight: CGFloat = 260
+    let minimumPanelHeight: CGFloat = 180
+    let maximumPanelHeight: CGFloat = 620
+    var embeddedSessions: [EmbeddedTerminalSession] = []
+    var selectedEmbeddedSessionID: UUID?
+
+    init(
+        workspacePaths: AgentWorkspacePaths = .default(),
+        toolCatalog: [AgentToolDefinition] = AgentToolCatalog.defaultTools,
+        fileManager: FileManager = .default
+    ) {
+        self.workspacePaths = workspacePaths
+        self.toolCatalog = toolCatalog
+        self.fileManager = fileManager
+    }
+
+    var selectedSession: AgentTerminalSession? {
+        sessions.first(where: { $0.id == selectedSessionID })
+    }
+
+    var selectedEmbeddedSession: EmbeddedTerminalSession? {
+        embeddedSessions.first(where: { $0.id == selectedEmbeddedSessionID })
+    }
+
+    func bootstrapWorkspace() {
+        do {
+            for directoryURL in workspacePaths.allDirectories {
+                try fileManager.createDirectory(at: directoryURL, withIntermediateDirectories: true)
+            }
+            try AgentWorkspaceBootstrapFiles.write(to: workspacePaths, fileManager: fileManager)
+            lastBootstrapErrorMessage = nil
+        } catch {
+            lastBootstrapErrorMessage = error.localizedDescription
+        }
+    }
+
+    @discardableResult
+    func createSession() -> AgentTerminalSession? {
+        lastBootstrapErrorMessage = "The integrated terminal is unavailable on iPad."
+        return nil
+    }
+
+    func removeSession(_ session: AgentTerminalSession) {}
+
+    @discardableResult
+    func createEmbeddedSession() -> EmbeddedTerminalSession? {
+        lastBootstrapErrorMessage = "The integrated terminal is unavailable on iPad."
+        return nil
+    }
+
+    func removeEmbeddedSession(_ session: EmbeddedTerminalSession) {}
+
+    func setPanelHeight(_ proposedHeight: CGFloat) {
+        panelHeight = min(maximumPanelHeight, max(minimumPanelHeight, proposedHeight))
+    }
+
+    func openSystemTerminal() {
+        lastBootstrapErrorMessage = "The integrated terminal is unavailable on iPad."
+    }
+}
+#endif

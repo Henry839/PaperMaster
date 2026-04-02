@@ -1,7 +1,7 @@
 import Foundation
 import SwiftData
 import XCTest
-@testable import PaperMaster
+@testable import PaperMasterShared
 
 @MainActor
 final class FeedbackEntryTests: XCTestCase {

@@ -1,7 +1,12 @@
-import AppKit
 import Foundation
 import Observation
 import SwiftData
+
+#if canImport(AppKit)
+import AppKit
+#elseif canImport(UIKit)
+import UIKit
+#endif
 
 struct PresentedError: Identifiable {
     let id = UUID()
@@ -25,8 +30,28 @@ protocol TextClipboardWriting: Sendable {
 
 struct SystemTextClipboardWriter: TextClipboardWriting {
     func setString(_ string: String) {
+        #if os(macOS)
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(string, forType: .string)
+        #elseif os(iOS)
+        UIPasteboard.general.string = string
+        #endif
+    }
+}
+
+protocol ExternalURLOpening: Sendable {
+    @MainActor
+    func open(_ url: URL)
+}
+
+struct SystemExternalURLOpener: ExternalURLOpening {
+    @MainActor
+    func open(_ url: URL) {
+        #if os(macOS)
+        NSWorkspace.shared.open(url)
+        #elseif os(iOS)
+        UIApplication.shared.open(url)
+        #endif
     }
 }
 
@@ -46,6 +71,8 @@ final class AppServices {
     let paperStorageCredentialStore: PaperStorageCredentialStoring
     let readerDocumentContextLoader: ReaderDocumentContextLoading
     let textClipboard: TextClipboardWriting
+    let externalURLOpener: ExternalURLOpening
+    let platformCapabilities: PlatformCapabilities
     @ObservationIgnored private let fileManager: FileManager
     @ObservationIgnored private let paperCardHTMLDirectoryURL: URL
     @ObservationIgnored private let agentImportDirectoryURL: URL
@@ -75,6 +102,8 @@ final class AppServices {
         paperStorageCredentialStore: PaperStorageCredentialStoring = InMemoryPaperStorageCredentialStore(),
         readerDocumentContextLoader: ReaderDocumentContextLoading = PDFKitReaderDocumentContextLoader(),
         textClipboard: TextClipboardWriting = SystemTextClipboardWriter(),
+        externalURLOpener: ExternalURLOpening = SystemExternalURLOpener(),
+        platformCapabilities: PlatformCapabilities = .current,
         fileManager: FileManager = .default,
         paperCardHTMLDirectoryURL: URL? = nil,
         agentImportDirectoryURL: URL? = nil,
@@ -94,6 +123,8 @@ final class AppServices {
         self.paperStorageCredentialStore = paperStorageCredentialStore
         self.readerDocumentContextLoader = readerDocumentContextLoader
         self.textClipboard = textClipboard
+        self.externalURLOpener = externalURLOpener
+        self.platformCapabilities = platformCapabilities
         self.fileManager = fileManager
         let defaultPaperCardDirectoryURL = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask).first?
             .appendingPathComponent("PaperMaster", isDirectory: true)
@@ -145,6 +176,7 @@ final class AppServices {
 
     func bootstrap(in context: ModelContext, settings existingSettings: [UserSettings], papers: [Paper]) async {
         let settings = ensureSettings(in: context, existingSettings: existingSettings)
+        normalizeSettingsForPlatform(settings, context: context)
         guard didBootstrap == false else { return }
 
         await reminderService.requestAuthorization()
@@ -171,6 +203,14 @@ final class AppServices {
         context.insert(settings)
         try? context.save()
         return settings
+    }
+
+    func normalizeSettingsForPlatform(_ settings: UserSettings, context: ModelContext) {
+        if platformCapabilities.supportsRemotePaperStorage == false,
+           settings.paperStorageMode == .remoteSSH {
+            settings.paperStorageMode = .defaultLocal
+            persistNotes(context: context)
+        }
     }
 
     func importPaper(
@@ -757,7 +797,7 @@ final class AppServices {
             }
         }
 
-        NSWorkspace.shared.open(targetURL)
+        externalURLOpener.open(targetURL)
     }
 
     func fusePapers(_ papers: [Paper], settings: UserSettings) async -> PaperFusionResult? {
@@ -857,6 +897,23 @@ final class AppServices {
         }
     }
 
+    func setCustomPaperStorageFolder(
+        _ url: URL,
+        for settings: UserSettings,
+        context: ModelContext
+    ) {
+        let folderURL = url.standardizedFileURL
+        do {
+            settings.customPaperStoragePath = folderURL.path
+            settings.customPaperStorageFolderDisplayName = folderURL.lastPathComponent
+            settings.customPaperStorageBookmarkData = try SecurityScopedURLAccess.bookmarkData(for: folderURL)
+            persistNotes(context: context)
+            refreshStorageFolderMonitoring(context: context)
+        } catch {
+            present(error)
+        }
+    }
+
     func saveTaggingAPIKey(_ apiKey: String) {
         do {
             try taggingCredentialStore.saveAPIKey(apiKey)
@@ -928,7 +985,7 @@ final class AppServices {
 
     func openSource(for paper: Paper) {
         guard let sourceURL = paper.sourceURL else { return }
-        NSWorkspace.shared.open(sourceURL)
+        externalURLOpener.open(sourceURL)
     }
 
     func delete(
@@ -1217,33 +1274,35 @@ final class AppServices {
     }
 
     private func discoverImportablePDFs(in directoryURL: URL, currentPapers: [Paper]) -> [URL] {
-        guard FileManager.default.fileExists(atPath: directoryURL.path) else {
-            return []
-        }
-
-        let trackedPaths = Set(
-            currentPapers.flatMap { paper in
-                [
-                    paper.sourceURL?.isFileURL == true ? paper.sourceURL?.standardizedFileURL.path : nil,
-                    paper.pdfURL?.isFileURL == true ? paper.pdfURL?.standardizedFileURL.path : nil,
-                    paper.managedPDFLocalURL?.standardizedFileURL.path
-                ].compactMap { $0 }
+        SecurityScopedURLAccess.withAccess(to: directoryURL) {
+            guard FileManager.default.fileExists(atPath: directoryURL.path) else {
+                return []
             }
-        )
 
-        let enumerator = FileManager.default.enumerator(
-            at: directoryURL,
-            includingPropertiesForKeys: [.isRegularFileKey, .isHiddenKey],
-            options: [.skipsHiddenFiles, .skipsPackageDescendants]
-        )
+            let trackedPaths = Set(
+                currentPapers.flatMap { paper in
+                    [
+                        paper.sourceURL?.isFileURL == true ? paper.sourceURL?.standardizedFileURL.path : nil,
+                        paper.pdfURL?.isFileURL == true ? paper.pdfURL?.standardizedFileURL.path : nil,
+                        paper.managedPDFLocalURL?.standardizedFileURL.path
+                    ].compactMap { $0 }
+                }
+            )
 
-        var discovered: [URL] = []
-        while let nextURL = enumerator?.nextObject() as? URL {
-            guard nextURL.pathExtension.lowercased() == "pdf" else { continue }
-            guard trackedPaths.contains(nextURL.standardizedFileURL.path) == false else { continue }
-            discovered.append(nextURL)
+            let enumerator = FileManager.default.enumerator(
+                at: directoryURL,
+                includingPropertiesForKeys: [.isRegularFileKey, .isHiddenKey],
+                options: [.skipsHiddenFiles, .skipsPackageDescendants]
+            )
+
+            var discovered: [URL] = []
+            while let nextURL = enumerator?.nextObject() as? URL {
+                guard nextURL.pathExtension.lowercased() == "pdf" else { continue }
+                guard trackedPaths.contains(nextURL.standardizedFileURL.path) == false else { continue }
+                discovered.append(nextURL)
+            }
+            return discovered
         }
-        return discovered
     }
 
     private func monitoredStorageFolderURL(for settings: UserSettings) -> URL? {
@@ -1251,9 +1310,7 @@ final class AppServices {
         case .defaultLocal:
             return defaultPaperStorageDirectoryURL
         case .customLocal:
-            let trimmedPath = settings.customPaperStoragePath.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard trimmedPath.isEmpty == false else { return nil }
-            return URL(fileURLWithPath: trimmedPath, isDirectory: true)
+            return settings.resolvedCustomPaperStorageDirectoryURL()
         case .remoteSSH:
             return nil
         }

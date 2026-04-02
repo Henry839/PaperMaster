@@ -1,7 +1,7 @@
 import CoreGraphics
 import Foundation
 import XCTest
-@testable import PaperMaster
+@testable import PaperMasterShared
 
 final class ReaderAskAITests: XCTestCase {
     func testSessionCapturePrefillsDefaultQuestion() throws {

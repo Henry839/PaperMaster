@@ -150,22 +150,29 @@ private struct ReaderElfBubble: View {
 
     var body: some View {
         let style = ReaderElfBubbleStyle.make(for: comment.mood)
+        let accentColor = Color(platformColor: style.accentColor)
+        let secondaryTextColor = Color(platformColor: style.secondaryTextColor)
+        let textColor = Color(platformColor: style.textColor)
+        let fillTopColor = Color(platformColor: style.fillTopColor)
+        let fillBottomColor = Color(platformColor: style.fillBottomColor)
+        let tailColor = Color(platformColor: style.tailColor)
+        let borderColor = Color(platformColor: style.borderColor)
         VStack(alignment: .leading, spacing: 7) {
             HStack(alignment: .firstTextBaseline, spacing: 6) {
                 Label(comment.mood.displayName, systemImage: comment.mood.symbolName)
                     .font(.system(size: 10.5, weight: .semibold, design: .rounded))
-                    .foregroundStyle(Color(nsColor: style.accentColor))
+                    .foregroundStyle(accentColor)
 
                 Spacer(minLength: 0)
 
                 Text("Page \(comment.passage.pageNumber)")
                     .font(.system(size: 10, weight: .medium, design: .rounded))
-                    .foregroundStyle(Color(nsColor: style.secondaryTextColor))
+                    .foregroundStyle(secondaryTextColor)
             }
 
             Text(comment.text)
                 .font(.system(size: 11.5, weight: .medium, design: .rounded))
-                .foregroundStyle(Color(nsColor: style.textColor))
+                .foregroundStyle(textColor)
                 .fixedSize(horizontal: false, vertical: true)
                 .multilineTextAlignment(.leading)
         }
@@ -177,8 +184,8 @@ private struct ReaderElfBubble: View {
                 .fill(
                     LinearGradient(
                         colors: [
-                            Color(nsColor: style.fillTopColor),
-                            Color(nsColor: style.fillBottomColor)
+                            fillTopColor,
+                            fillBottomColor
                         ],
                         startPoint: .topLeading,
                         endPoint: .bottomTrailing
@@ -188,20 +195,19 @@ private struct ReaderElfBubble: View {
         .overlay {
             GeometryReader { proxy in
                 if let tailTip {
-                    ReaderElfBubbleTail(placement: placement)
-                        .fill(Color(nsColor: style.tailColor))
+                    ReaderElfBubbleTailView(
+                        placement: placement,
+                        fillColor: tailColor,
+                        borderColor: borderColor
+                    )
                         .frame(width: 18, height: 14)
-                        .overlay {
-                            ReaderElfBubbleTail(placement: placement)
-                                .stroke(Color(nsColor: style.borderColor), lineWidth: 1)
-                        }
                         .position(tailPosition(in: proxy.size, tailTip: tailTip))
                 }
             }
         }
         .overlay(
             RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .stroke(Color(nsColor: style.borderColor), lineWidth: 1.05)
+                .stroke(borderColor, lineWidth: 1.05)
         )
         .shadow(color: Color.black.opacity(0.14), radius: 12, y: 7)
     }
@@ -226,6 +232,7 @@ private struct ReaderElfFigure: View {
     let parked: Bool
 
     var body: some View {
+        let accentColor = Color(platformColor: mood.accentColor)
         ZStack {
             Ellipse()
                 .fill(Color.black.opacity(parked ? 0.08 : 0.14))
@@ -235,7 +242,7 @@ private struct ReaderElfFigure: View {
             VStack(spacing: -6) {
                 ZStack {
                     Capsule()
-                        .fill(Color(nsColor: mood.accentColor).opacity(parked ? 0.12 : 0.18))
+                        .fill(accentColor.opacity(parked ? 0.12 : 0.18))
                         .frame(width: 34, height: 40)
 
                     HStack(spacing: 10) {
@@ -250,13 +257,13 @@ private struct ReaderElfFigure: View {
                         .offset(y: 7)
 
                     ElfEar()
-                        .fill(Color(nsColor: mood.accentColor).opacity(parked ? 0.72 : 1))
+                        .fill(accentColor.opacity(parked ? 0.72 : 1))
                         .frame(width: 11, height: 18)
                         .rotationEffect(.degrees(-20))
                         .offset(x: -18, y: -2)
 
                     ElfEar()
-                        .fill(Color(nsColor: mood.accentColor).opacity(parked ? 0.72 : 1))
+                        .fill(accentColor.opacity(parked ? 0.72 : 1))
                         .frame(width: 11, height: 18)
                         .scaleEffect(x: -1, y: 1)
                         .rotationEffect(.degrees(20))
@@ -268,8 +275,8 @@ private struct ReaderElfFigure: View {
                         .fill(
                             LinearGradient(
                                 colors: [
-                                    Color(nsColor: mood.accentColor).opacity(parked ? 0.72 : 1),
-                                    Color(nsColor: mood.accentColor).opacity(parked ? 0.46 : 0.68)
+                                    accentColor.opacity(parked ? 0.72 : 1),
+                                    accentColor.opacity(parked ? 0.46 : 0.68)
                                 ],
                                 startPoint: .top,
                                 endPoint: .bottom
@@ -278,7 +285,7 @@ private struct ReaderElfFigure: View {
                         .frame(width: 34, height: 34)
 
                     Triangle()
-                        .fill(Color(nsColor: mood.accentColor).opacity(parked ? 0.56 : 0.86))
+                        .fill(accentColor.opacity(parked ? 0.56 : 0.86))
                         .frame(width: 18, height: 14)
                         .offset(y: -9)
                 }
@@ -291,6 +298,22 @@ private struct ReaderElfFigure: View {
         Capsule()
             .fill(Color.primary.opacity(parked ? 0.48 : 0.8))
             .frame(width: 6, height: 6 * blinkScale)
+    }
+}
+
+private struct ReaderElfBubbleTailView: View {
+    let placement: ReaderElfBubblePlacement
+    let fillColor: Color
+    let borderColor: Color
+
+    var body: some View {
+        ZStack {
+            ReaderElfBubbleTail(placement: placement)
+                .fill(fillColor)
+
+            ReaderElfBubbleTail(placement: placement)
+                .stroke(borderColor, lineWidth: 1)
+        }
     }
 }
 

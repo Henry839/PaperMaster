@@ -1,3 +1,6 @@
+import Foundation
+
+#if os(macOS)
 import AppKit
 @preconcurrency import UserNotifications
 
@@ -102,3 +105,4 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         (window is NSPanel) == false
     }
 }
+#endif

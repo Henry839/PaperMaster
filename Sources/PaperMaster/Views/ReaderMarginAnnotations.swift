@@ -1,5 +1,6 @@
 import SwiftUI
 
+#if os(macOS)
 struct ReaderMarginAnnotationOverlayView: View {
     let geometry: ReaderMarginAnnotationGeometry
     let annotations: [PaperAnnotation]
@@ -298,3 +299,4 @@ private struct MarginCardHeightPreferenceKey: PreferenceKey {
         value.merge(nextValue()) { _, new in new }
     }
 }
+#endif

@@ -1,6 +1,6 @@
 import Foundation
 import XCTest
-@testable import PaperMaster
+@testable import PaperMasterShared
 
 final class PaperFusionServiceTests: XCTestCase {
     func testOpenAICompatibleFusionGeneratorNormalizesAndCapsIdeasToThreeCards() async throws {

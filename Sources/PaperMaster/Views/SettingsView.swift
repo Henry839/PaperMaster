@@ -1,6 +1,10 @@
-import AppKit
 import SwiftData
 import SwiftUI
+import UniformTypeIdentifiers
+
+#if os(macOS)
+import AppKit
+#endif
 
 struct SettingsView: View {
     @Environment(\.modelContext) private var modelContext
@@ -14,6 +18,7 @@ struct SettingsView: View {
     @State private var didLoadTaggingAPIKey = false
     @State private var paperStoragePassword = ""
     @State private var hasSavedPaperStoragePassword = false
+    @State private var isPaperStorageFolderImporterPresented = false
 
     var body: some View {
         ScrollView {
@@ -46,6 +51,21 @@ struct SettingsView: View {
             taggingAPIKey = services.loadTaggingAPIKey()
             hasSavedPaperStoragePassword = services.hasSavedPaperStoragePassword(for: settings)
             didLoadTaggingAPIKey = true
+        }
+        .fileImporter(
+            isPresented: $isPaperStorageFolderImporterPresented,
+            allowedContentTypes: [.folder],
+            allowsMultipleSelection: false
+        ) { result in
+            guard case let .success(urls) = result,
+                  let selectedURL = urls.first else {
+                return
+            }
+            services.setCustomPaperStorageFolder(
+                selectedURL,
+                for: settings,
+                context: modelContext
+            )
         }
     }
 
@@ -112,8 +132,10 @@ struct SettingsView: View {
     private var paperStorageSection: some View {
         let readiness = settings.paperStorageReadiness(
             defaultDirectoryURL: services.defaultPaperStorageDirectoryURL,
-            hasRemotePassword: hasSavedPaperStoragePassword || typedPaperStoragePasswordIsPresent
+            hasRemotePassword: hasSavedPaperStoragePassword || typedPaperStoragePasswordIsPresent,
+            capabilities: services.platformCapabilities
         )
+        let availableStorageModes = PaperStorageMode.supportedCases(capabilities: services.platformCapabilities)
 
         return VStack(alignment: .leading, spacing: 18) {
             VStack(alignment: .leading, spacing: 4) {
@@ -137,7 +159,7 @@ struct SettingsView: View {
                         }
                     )
                 ) {
-                    ForEach(PaperStorageMode.allCases) { mode in
+                    ForEach(availableStorageModes) { mode in
                         Text(mode.title).tag(mode)
                     }
                 }
@@ -166,7 +188,7 @@ struct SettingsView: View {
                         }
 
                         if settings.customPaperStoragePath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false {
-                            Text(settings.customPaperStoragePath)
+                            Text(settings.customPaperStorageFolderDisplayName.isEmpty ? settings.customPaperStoragePath : settings.customPaperStorageFolderDisplayName)
                                 .font(.footnote)
                                 .foregroundStyle(.secondary)
                                 .textSelection(.enabled)
@@ -390,6 +412,9 @@ struct SettingsView: View {
     }
 
     private func choosePaperStorageFolder() {
+        #if os(iOS)
+        isPaperStorageFolderImporterPresented = true
+        #else
         let panel = NSOpenPanel()
         panel.canChooseFiles = false
         panel.canChooseDirectories = true
@@ -405,9 +430,13 @@ struct SettingsView: View {
         }
 
         if panel.runModal() == .OK, let selectedURL = panel.url {
-            settings.customPaperStoragePath = selectedURL.path
-            persistPaperStorageSettings()
+            services.setCustomPaperStorageFolder(
+                selectedURL,
+                for: settings,
+                context: modelContext
+            )
         }
+        #endif
     }
 }
 

@@ -1,6 +1,8 @@
+import SwiftUI
+
+#if os(macOS)
 import AppKit
 import SwiftTerm
-import SwiftUI
 
 struct IntegratedTerminalPanel: View {
     @Environment(AgentRuntimeService.self) private var agentRuntime
@@ -153,3 +155,4 @@ private struct TerminalContainerView: NSViewRepresentable {
         session.startIfNeeded()
     }
 }
+#endif

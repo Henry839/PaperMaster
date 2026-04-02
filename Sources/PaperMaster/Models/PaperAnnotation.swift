@@ -1,4 +1,3 @@
-import AppKit
 import Foundation
 import SwiftData
 
@@ -20,14 +19,14 @@ enum ReaderHighlightColor: String, CaseIterable, Codable, Identifiable {
         }
     }
 
-    var pdfColor: NSColor {
+    var pdfColor: PlatformColor {
         switch self {
         case .yellow:
-            return NSColor.systemYellow.withAlphaComponent(0.34)
+            return PlatformColor.systemYellow.withAlphaComponent(0.34)
         case .mint:
-            return NSColor.systemMint.withAlphaComponent(0.30)
+            return PlatformColor.systemMint.withAlphaComponent(0.30)
         case .pink:
-            return NSColor.systemPink.withAlphaComponent(0.28)
+            return PlatformColor.systemPink.withAlphaComponent(0.28)
         }
     }
 }

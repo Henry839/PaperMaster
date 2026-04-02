@@ -1,7 +1,7 @@
 import AppKit
 import CoreGraphics
 import XCTest
-@testable import PaperMaster
+@testable import PaperMasterShared
 
 final class ReaderCompanionTests: XCTestCase {
     func testSessionCapsRecentCommentsAndKeepsNewestFirst() throws {

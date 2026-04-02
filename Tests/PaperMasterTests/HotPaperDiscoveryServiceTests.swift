@@ -1,5 +1,5 @@
 import XCTest
-@testable import PaperMaster
+@testable import PaperMasterShared
 
 final class HotPaperDiscoveryServiceTests: XCTestCase {
     func testDiscoverPapersParsesAndSortsByFreshnessAndLibrarySignals() async throws {

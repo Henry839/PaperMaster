@@ -17,6 +17,17 @@ enum PaperStorageMode: String, CaseIterable, Identifiable, Sendable {
             "Remote SSH"
         }
     }
+
+    static func supportedCases(capabilities: PlatformCapabilities = .current) -> [PaperStorageMode] {
+        allCases.filter { mode in
+            switch mode {
+            case .defaultLocal, .customLocal:
+                return true
+            case .remoteSSH:
+                return capabilities.supportsRemotePaperStorage
+            }
+        }
+    }
 }
 
 struct PaperStorageRemoteEndpoint: Hashable, Equatable, Sendable {
@@ -42,6 +53,7 @@ enum PaperStorageReadiness: Equatable, Sendable {
     case readyCustomLocal(path: String)
     case readyRemote(endpoint: PaperStorageRemoteEndpoint, directory: String)
     case missingLocalPath
+    case missingLocalFolderAccess
     case invalidLocalPath
     case missingRemoteHost
     case invalidRemotePort
@@ -54,6 +66,7 @@ enum PaperStorageReadiness: Equatable, Sendable {
         case .readyDefaultLocal, .readyCustomLocal, .readyRemote:
             true
         case .missingLocalPath,
+             .missingLocalFolderAccess,
              .invalidLocalPath,
              .missingRemoteHost,
              .invalidRemotePort,
@@ -74,6 +87,8 @@ enum PaperStorageReadiness: Equatable, Sendable {
             "New paper PDFs will be stored over SSH at \(endpoint.displayName):\(directory)."
         case .missingLocalPath:
             "Choose a local folder before using custom paper storage."
+        case .missingLocalFolderAccess:
+            "Choose the local folder again to restore PaperMaster's access."
         case .invalidLocalPath:
             "The selected local paper storage folder is invalid."
         case .missingRemoteHost:

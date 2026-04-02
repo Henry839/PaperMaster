@@ -5,7 +5,7 @@
 <h1 align="center">PaperMaster</h1>
 
 <p align="center">
-  A native macOS workspace for collecting papers, planning what to read next, reading PDFs in-app, and bringing local agents directly into the research loop.
+  A native paper workspace for macOS and iPad, built for collecting papers, planning what to read next, reading PDFs in-app, and bringing local agents into the research loop.
 </p>
 
 <p align="center">
@@ -14,7 +14,7 @@
 
 PaperMaster is a paper-reading app for people who do serious literature work and do not want their workflow split across a PDF viewer, a backlog manager, a browser full of arXiv tabs, and a separate AI chat window.
 
-It combines library management, queue planning, in-app reading, AI-assisted synthesis, and an embedded terminal for local agents in one native macOS app. The goal is simple: keep the whole paper workflow in one place, and make it programmable when you need more than a passive archive.
+It combines library management, queue planning, in-app reading, AI-assisted synthesis, and an embedded terminal for local agents in one native Apple-platform app family. On iPad, the reader and library workflow are available, while the embedded terminal and remote SSH paper storage remain macOS-only. The goal is simple: keep the whole paper workflow in one place, and make it programmable when you need more than a passive archive.
 
 ## Why PaperMaster
 
@@ -68,6 +68,7 @@ It combines library management, queue planning, in-app reading, AI-assisted synt
 - Extract metadata from PDFs when possible, then enrich with arXiv and Crossref data.
 - Avoid duplicate imports by matching normalized source identity.
 - Store managed PDFs in the default app folder, a custom local folder, or a remote SSH destination.
+- On iPad, use `Default` or `Custom Local` storage; `Remote SSH` stays macOS-only.
 - Watch a local storage folder and auto-ingest newly copied PDFs.
 
 ### Manage reading flow
@@ -98,6 +99,8 @@ It combines library management, queue planning, in-app reading, AI-assisted synt
 - Bootstrap an agent workspace with an app-specific `AGENTS.md` and the built-in `papermaster-agent-ops` skill.
 - Use a watched import directory so agents can drop PDFs into PaperMaster for fast ingestion.
 
+The embedded terminal workflow is available on macOS only in the current iPad rollout.
+
 ## Local-First Behavior
 
 - Library data is stored locally with `SwiftData`.
@@ -109,15 +112,19 @@ It combines library management, queue planning, in-app reading, AI-assisted synt
 
 ## Requirements
 
-- macOS 14 or later.
+- macOS 14 or later for the desktop app.
+- iPadOS 17 or later for the iPad app target and simulator build.
 - Xcode Command Line Tools with a working `swift` executable.
+- Xcode with an installed iOS Simulator runtime if you want to launch the iPad build in Simulator.
 - Internet access if you want arXiv/Crossref enrichment, hot paper discovery, remote paper storage, or AI-backed features.
 
 The standalone app bundle flow is written for Apple Silicon builds.
 
 ## Build and Run
 
-Build the app bundle from the project root:
+### macOS
+
+Build the standalone macOS app bundle from the project root:
 
 ```bash
 ./Scripts/build-app.sh release
@@ -143,6 +150,30 @@ For development:
 ```
 
 Open `Package.swift` in Xcode for the normal macOS debugging workflow.
+
+### iPad
+
+Generate and build the iPad app wrapper against the shared Swift package:
+
+```bash
+./Scripts/build-ipad.sh debug simulator
+```
+
+This produces an app bundle under:
+
+```text
+dist/DerivedData/PaperMasteriPad-simulator-debug/Build/Products/Debug-iphonesimulator/PaperMasteriPad.app
+```
+
+To launch the app in an installed iPad simulator:
+
+```bash
+./Scripts/run-ipad-simulator.sh
+```
+
+The simulator script creates or reuses an iPad simulator device when an iOS runtime is installed. It cannot install runtimes for you; if `xcrun simctl list runtimes` is empty, install one in Xcode first.
+
+The current iPad build keeps its own local library and supports reading, import, annotations, `Ask AI`, `Hot Papers`, and `Fusion Reactor`, but it does not expose the embedded terminal or `Remote SSH` storage yet.
 
 ## AI Provider Setup
 

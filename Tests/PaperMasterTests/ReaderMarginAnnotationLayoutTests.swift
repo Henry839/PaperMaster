@@ -1,7 +1,7 @@
 import AppKit
 import SwiftUI
 import XCTest
-@testable import PaperMaster
+@testable import PaperMasterShared
 
 final class ReaderMarginAnnotationLayoutTests: XCTestCase {
     private let paneBounds = CGRect(x: 0, y: 0, width: 1000, height: 800)

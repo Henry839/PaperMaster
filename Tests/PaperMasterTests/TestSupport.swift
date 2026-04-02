@@ -3,7 +3,7 @@ import Foundation
 import PDFKit
 import SwiftData
 import UserNotifications
-@testable import PaperMaster
+@testable import PaperMasterShared
 
 struct StubNetworking: Networking {
     let handler: @Sendable (URL) throws -> (Data, URLResponse)

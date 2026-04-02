@@ -10,6 +10,8 @@ final class UserSettings {
     var defaultImportBehaviorRawValue: String
     var paperStorageModeRawValueStorage: String?
     var customPaperStoragePathStorage: String?
+    var customPaperStorageBookmarkDataStorage: Data?
+    var customPaperStorageFolderDisplayNameStorage: String?
     var remotePaperStorageHostStorage: String?
     var remotePaperStoragePortStorage: Int?
     var remotePaperStorageUsernameStorage: String?
@@ -26,6 +28,8 @@ final class UserSettings {
         defaultImportBehavior: ImportBehavior = .scheduleImmediately,
         paperStorageMode: PaperStorageMode = .defaultLocal,
         customPaperStoragePath: String = "",
+        customPaperStorageBookmarkData: Data? = nil,
+        customPaperStorageFolderDisplayName: String = "",
         remotePaperStorageHost: String = "",
         remotePaperStoragePort: Int = 22,
         remotePaperStorageUsername: String = "",
@@ -41,6 +45,8 @@ final class UserSettings {
         self.defaultImportBehaviorRawValue = defaultImportBehavior.rawValue
         self.paperStorageModeRawValueStorage = paperStorageMode.rawValue
         self.customPaperStoragePathStorage = customPaperStoragePath
+        self.customPaperStorageBookmarkDataStorage = customPaperStorageBookmarkData
+        self.customPaperStorageFolderDisplayNameStorage = customPaperStorageFolderDisplayName
         self.remotePaperStorageHostStorage = remotePaperStorageHost
         self.remotePaperStoragePortStorage = remotePaperStoragePort
         self.remotePaperStorageUsernameStorage = remotePaperStorageUsername
@@ -65,6 +71,16 @@ final class UserSettings {
         set { customPaperStoragePathStorage = newValue }
     }
 
+    var customPaperStorageBookmarkData: Data? {
+        get { customPaperStorageBookmarkDataStorage }
+        set { customPaperStorageBookmarkDataStorage = newValue }
+    }
+
+    var customPaperStorageFolderDisplayName: String {
+        get { customPaperStorageFolderDisplayNameStorage ?? "" }
+        set { customPaperStorageFolderDisplayNameStorage = newValue }
+    }
+
     var remotePaperStorageHost: String {
         get { remotePaperStorageHostStorage ?? "" }
         set { remotePaperStorageHostStorage = newValue }
@@ -87,22 +103,31 @@ final class UserSettings {
 
     func paperStorageReadiness(
         defaultDirectoryURL: URL,
-        hasRemotePassword: Bool
+        hasRemotePassword: Bool,
+        capabilities: PlatformCapabilities = .current
     ) -> PaperStorageReadiness {
         switch paperStorageMode {
         case .defaultLocal:
             return .readyDefaultLocal(path: defaultDirectoryURL.path)
         case .customLocal:
-            let trimmedPath = customPaperStoragePath.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard trimmedPath.isEmpty == false else {
-                return .missingLocalPath
+            guard let localURL = resolvedCustomPaperStorageDirectoryURL() else {
+                if customPaperStoragePath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    return .missingLocalPath
+                }
+                #if os(iOS)
+                return .missingLocalFolderAccess
+                #else
+                return .invalidLocalPath
+                #endif
             }
-            let localURL = URL(fileURLWithPath: trimmedPath, isDirectory: true)
             guard localURL.path.isEmpty == false else {
                 return .invalidLocalPath
             }
             return .readyCustomLocal(path: localURL.path)
         case .remoteSSH:
+            guard capabilities.supportsRemotePaperStorage else {
+                return .missingLocalPath
+            }
             let trimmedHost = remotePaperStorageHost.trimmingCharacters(in: .whitespacesAndNewlines)
             guard trimmedHost.isEmpty == false else {
                 return .missingRemoteHost
@@ -134,18 +159,19 @@ final class UserSettings {
 
     func paperStorageConfiguration(
         defaultDirectoryURL: URL,
-        remotePassword: String?
+        remotePassword: String?,
+        capabilities: PlatformCapabilities = .current
     ) -> PaperStorageConfiguration? {
         switch paperStorageMode {
         case .defaultLocal:
             return PaperStorageConfiguration(destination: .local(directoryURL: defaultDirectoryURL))
         case .customLocal:
-            let trimmedPath = customPaperStoragePath.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard trimmedPath.isEmpty == false else { return nil }
+            guard let directoryURL = resolvedCustomPaperStorageDirectoryURL() else { return nil }
             return PaperStorageConfiguration(
-                destination: .local(directoryURL: URL(fileURLWithPath: trimmedPath, isDirectory: true))
+                destination: .local(directoryURL: directoryURL)
             )
         case .remoteSSH:
+            guard capabilities.supportsRemotePaperStorage else { return nil }
             let trimmedHost = remotePaperStorageHost.trimmingCharacters(in: .whitespacesAndNewlines)
             let trimmedUsername = remotePaperStorageUsername.trimmingCharacters(in: .whitespacesAndNewlines)
             let normalizedDirectory = normalizedRemoteStorageDirectory(remotePaperStorageDirectory)
@@ -251,5 +277,26 @@ final class UserSettings {
             return nil
         }
         return configuration
+    }
+
+    func resolvedCustomPaperStorageDirectoryURL() -> URL? {
+        let trimmedPath = customPaperStoragePath.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmedPath.isEmpty == false else { return nil }
+
+        #if os(iOS)
+        guard let bookmarkData = customPaperStorageBookmarkData else { return nil }
+        var isStale = false
+        guard let resolvedURL = try? URL(
+            resolvingBookmarkData: bookmarkData,
+            options: [],
+            relativeTo: nil,
+            bookmarkDataIsStale: &isStale
+        ) else {
+            return nil
+        }
+        return resolvedURL
+        #else
+        return URL(fileURLWithPath: trimmedPath, isDirectory: true)
+        #endif
     }
 }

@@ -1,4 +1,3 @@
-import AppKit
 import Foundation
 import PDFKit
 
@@ -119,20 +118,20 @@ enum ReaderElfMood: String, CaseIterable, Equatable, Sendable {
         }
     }
 
-    var accentColor: NSColor {
+    var accentColor: PlatformColor {
         switch self {
         case .skeptical:
-            return NSColor.systemOrange
+            return PlatformColor.systemOrange
         case .alarmed:
-            return NSColor.systemRed
+            return PlatformColor.systemRed
         case .amused:
-            return NSColor.systemTeal
+            return PlatformColor.systemTeal
         case .intrigued:
-            return NSColor.systemMint
+            return PlatformColor.systemMint
         }
     }
 
-    var bubbleTint: NSColor {
+    var bubbleTint: PlatformColor {
         accentColor.withAlphaComponent(0.14)
     }
 }
@@ -698,37 +697,37 @@ struct ReaderElfUnderlinePresentationState: Equatable {
 }
 
 struct ReaderElfBubbleStyle {
-    static let pdfBodyReferenceColor = NSColor.black
-    static let commentTextColor = NSColor(
+    static let pdfBodyReferenceColor = PlatformColor.black
+    static let commentTextColor = PlatformColor(
         calibratedRed: 0.17,
         green: 0.26,
         blue: 0.35,
         alpha: 1
     )
-    static let supportingTextColor = NSColor(
+    static let supportingTextColor = PlatformColor(
         calibratedRed: 0.42,
         green: 0.46,
         blue: 0.50,
         alpha: 1
     )
 
-    let fillTopColor: NSColor
-    let fillBottomColor: NSColor
-    let borderColor: NSColor
-    let accentColor: NSColor
-    let tailColor: NSColor
-    let textColor: NSColor
-    let secondaryTextColor: NSColor
+    let fillTopColor: PlatformColor
+    let fillBottomColor: PlatformColor
+    let borderColor: PlatformColor
+    let accentColor: PlatformColor
+    let tailColor: PlatformColor
+    let textColor: PlatformColor
+    let secondaryTextColor: PlatformColor
 
     static func make(for mood: ReaderElfMood) -> ReaderElfBubbleStyle {
         ReaderElfBubbleStyle(
-            fillTopColor: NSColor(
+            fillTopColor: PlatformColor(
                 calibratedRed: 0.994,
                 green: 0.978,
                 blue: 0.946,
                 alpha: 0.98
             ),
-            fillBottomColor: NSColor(
+            fillBottomColor: PlatformColor(
                 calibratedRed: 0.978,
                 green: 0.956,
                 blue: 0.918,
@@ -736,7 +735,7 @@ struct ReaderElfBubbleStyle {
             ),
             borderColor: mood.accentColor.withAlphaComponent(0.34),
             accentColor: mood.accentColor,
-            tailColor: NSColor(
+            tailColor: PlatformColor(
                 calibratedRed: 0.986,
                 green: 0.967,
                 blue: 0.932,

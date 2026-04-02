@@ -1,8 +1,13 @@
+#if os(macOS)
 import AppKit
+#elseif os(iOS)
+import UIKit
+#endif
 import PDFKit
 import SwiftData
 import SwiftUI
 
+#if os(macOS)
 struct ReaderView: View {
     @AppStorage("reader.lastHighlightColor") private var lastHighlightColorRawValue = ReaderHighlightColor.yellow.rawValue
     @AppStorage("reader.elf.enabled") private var readerElfEnabled = true
@@ -2029,3 +2034,446 @@ private struct ReaderThumbnailView: NSViewRepresentable {
         }
     }
 }
+#else
+struct ReaderView: View {
+    @AppStorage("reader.lastHighlightColor") private var lastHighlightColorRawValue = ReaderHighlightColor.yellow.rawValue
+    @Environment(\.modelContext) private var modelContext
+    @Environment(AppServices.self) private var services
+
+    @Bindable var paper: Paper
+    let fileURL: URL
+    let settings: UserSettings
+
+    @State private var selectionSnapshot: ReaderSelectionSnapshot?
+    @State private var currentPageIndex: Int = 0
+    @State private var totalPageCount: Int = 0
+    @State private var currentScaleFactor: CGFloat = 1.0
+    @State private var searchText = ""
+    @State private var searchResults: [PDFSelection] = []
+    @State private var currentSearchResultIndex = 0
+    @State private var isSearchBarVisible = false
+    @State private var isAnnotationSheetPresented = false
+    @State private var pdfViewReference = ReaderIOSPDFViewReference()
+
+    private var selectedHighlightColor: ReaderHighlightColor {
+        ReaderHighlightColor(rawValue: lastHighlightColorRawValue) ?? .yellow
+    }
+
+    private var sortedAnnotations: [PaperAnnotation] {
+        paper.annotations.sorted(by: PaperAnnotation.sidebarSort)
+    }
+
+    private var zoomPercentage: String {
+        "\(Int(currentScaleFactor * 100))%"
+    }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            readerToolbar
+
+            if isSearchBarVisible {
+                searchBar
+            }
+
+            ReaderIOSPDFHost(
+                fileURL: fileURL,
+                annotations: sortedAnnotations,
+                searchText: searchText,
+                currentSearchResultIndex: currentSearchResultIndex,
+                selectionSnapshot: $selectionSnapshot,
+                currentPageIndex: $currentPageIndex,
+                totalPageCount: $totalPageCount,
+                currentScaleFactor: $currentScaleFactor,
+                searchResults: $searchResults,
+                pdfViewReference: pdfViewReference
+            )
+        }
+        .background(Color(platformColor: .systemBackground))
+        .navigationTitle(paper.title)
+        .sheet(isPresented: $isAnnotationSheetPresented) {
+            NavigationStack {
+                List {
+                    if sortedAnnotations.isEmpty {
+                        ContentUnavailableView(
+                            "No annotations yet",
+                            systemImage: "highlighter",
+                            description: Text("Select text in the PDF and save a highlight to start building notes.")
+                        )
+                        .frame(maxWidth: .infinity, minHeight: 220)
+                        .listRowBackground(Color.clear)
+                    } else {
+                        ForEach(sortedAnnotations) { annotation in
+                            ReaderIOSAnnotationRow(annotation: annotation)
+                        }
+                    }
+                }
+                .navigationTitle("Annotations")
+                .toolbar {
+                    ToolbarItem(placement: .topBarTrailing) {
+                        Button("Done") {
+                            isAnnotationSheetPresented = false
+                        }
+                    }
+                }
+            }
+            .presentationDetents([.medium, .large])
+        }
+    }
+
+    private var readerToolbar: some View {
+        VStack(spacing: 8) {
+            HStack(spacing: 12) {
+                Button {
+                    pdfViewReference.pdfView?.scaleFactor = max(
+                        pdfViewReference.pdfView?.minScaleFactor ?? 0.5,
+                        (pdfViewReference.pdfView?.scaleFactor ?? currentScaleFactor) * 0.9
+                    )
+                } label: {
+                    Image(systemName: "minus.magnifyingglass")
+                }
+
+                Button(zoomPercentage) {
+                    pdfViewReference.pdfView?.scaleFactor = pdfViewReference.pdfView?.scaleFactorForSizeToFit ?? 1.0
+                }
+                .monospacedDigit()
+
+                Button {
+                    pdfViewReference.pdfView?.scaleFactor = min(
+                        pdfViewReference.pdfView?.maxScaleFactor ?? 5.0,
+                        (pdfViewReference.pdfView?.scaleFactor ?? currentScaleFactor) * 1.1
+                    )
+                } label: {
+                    Image(systemName: "plus.magnifyingglass")
+                }
+
+                Spacer()
+
+                Button {
+                    isSearchBarVisible.toggle()
+                } label: {
+                    Image(systemName: "magnifyingglass")
+                }
+
+                Button {
+                    isAnnotationSheetPresented = true
+                } label: {
+                    Label("\(sortedAnnotations.count)", systemImage: "highlighter")
+                        .labelStyle(.titleAndIcon)
+                }
+
+                Menu {
+                    Picker("Highlight", selection: $lastHighlightColorRawValue) {
+                        ForEach(ReaderHighlightColor.allCases) { color in
+                            Text(color.displayName).tag(color.rawValue)
+                        }
+                    }
+                } label: {
+                    Label(selectedHighlightColor.displayName, systemImage: "paintpalette")
+                }
+
+                Button("Highlight") {
+                    saveHighlight()
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(selectionSnapshot == nil)
+            }
+            .padding(.horizontal, 16)
+            .padding(.top, 12)
+
+            HStack {
+                Text("Page \(currentPageIndex + 1) / \(max(totalPageCount, 1))")
+                    .font(.footnote.weight(.medium))
+                    .monospacedDigit()
+                Spacer()
+                if let selectionSnapshot {
+                    Text("Selected: \(selectionSnapshot.quotedText)")
+                        .font(.footnote)
+                        .lineLimit(1)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .padding(.horizontal, 16)
+            .padding(.bottom, 8)
+        }
+        .background(.thinMaterial)
+    }
+
+    private var searchBar: some View {
+        HStack(spacing: 12) {
+            TextField("Search in paper", text: $searchText)
+                .textFieldStyle(.roundedBorder)
+
+            Button {
+                guard searchResults.isEmpty == false else { return }
+                currentSearchResultIndex = max(0, currentSearchResultIndex - 1)
+            } label: {
+                Image(systemName: "chevron.up")
+            }
+            .disabled(searchResults.isEmpty)
+
+            Button {
+                guard searchResults.isEmpty == false else { return }
+                currentSearchResultIndex = min(searchResults.count - 1, currentSearchResultIndex + 1)
+            } label: {
+                Image(systemName: "chevron.down")
+            }
+            .disabled(searchResults.isEmpty)
+
+            Text(searchResults.isEmpty ? "No matches" : "\(currentSearchResultIndex + 1) / \(searchResults.count)")
+                .font(.footnote)
+                .monospacedDigit()
+                .foregroundStyle(.secondary)
+        }
+        .padding(.horizontal, 16)
+        .padding(.bottom, 10)
+        .background(.thinMaterial)
+    }
+
+    private func saveHighlight() {
+        guard let selectionSnapshot else { return }
+        lastHighlightColorRawValue = selectedHighlightColor.rawValue
+        _ = services.saveAnnotation(
+            for: paper,
+            selection: selectionSnapshot,
+            color: selectedHighlightColor,
+            context: modelContext
+        )
+        services.showNotice("Highlight saved.")
+    }
+}
+
+private struct ReaderIOSAnnotationRow: View {
+    @Environment(\.modelContext) private var modelContext
+    @Environment(AppServices.self) private var services
+    @Bindable var annotation: PaperAnnotation
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Page \(annotation.pageNumber)")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+
+            Text(annotation.quotedText)
+                .font(.body)
+
+            TextEditor(text: $annotation.noteText)
+                .frame(minHeight: 96)
+                .padding(8)
+                .background(
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .fill(Color.secondary.opacity(0.08))
+                )
+                .onChange(of: annotation.noteText) { _, _ in
+                    annotation.touch()
+                    services.persistNotes(context: modelContext)
+                }
+        }
+        .padding(.vertical, 8)
+    }
+}
+
+private final class ReaderIOSPDFViewReference: ObservableObject {
+    weak var pdfView: PDFView?
+}
+
+private struct ReaderIOSPDFHost: UIViewRepresentable {
+    let fileURL: URL
+    let annotations: [PaperAnnotation]
+    let searchText: String
+    let currentSearchResultIndex: Int
+    @Binding var selectionSnapshot: ReaderSelectionSnapshot?
+    @Binding var currentPageIndex: Int
+    @Binding var totalPageCount: Int
+    @Binding var currentScaleFactor: CGFloat
+    @Binding var searchResults: [PDFSelection]
+    let pdfViewReference: ReaderIOSPDFViewReference
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(
+            selectionSnapshot: $selectionSnapshot,
+            currentPageIndex: $currentPageIndex,
+            totalPageCount: $totalPageCount,
+            currentScaleFactor: $currentScaleFactor,
+            searchResults: $searchResults
+        )
+    }
+
+    func makeUIView(context: Context) -> PDFView {
+        let pdfView = PDFView()
+        pdfView.autoScales = true
+        pdfView.displayMode = .singlePageContinuous
+        pdfView.displayDirection = .vertical
+        pdfView.backgroundColor = .systemBackground
+        pdfView.usePageViewController(true, withViewOptions: nil)
+        pdfViewReference.pdfView = pdfView
+        context.coordinator.configure(pdfView: pdfView)
+        context.coordinator.loadDocumentIfNeeded(from: fileURL, into: pdfView)
+        return pdfView
+    }
+
+    func updateUIView(_ uiView: PDFView, context: Context) {
+        pdfViewReference.pdfView = uiView
+        context.coordinator.configure(pdfView: uiView)
+        context.coordinator.loadDocumentIfNeeded(from: fileURL, into: uiView)
+        context.coordinator.reconcileAnnotations(annotations, in: uiView)
+        context.coordinator.performSearch(searchText, in: uiView)
+        context.coordinator.highlightSearchResult(at: currentSearchResultIndex, in: uiView)
+    }
+
+    @MainActor
+    final class Coordinator: NSObject {
+        var selectionSnapshotBinding: Binding<ReaderSelectionSnapshot?>
+        var currentPageIndexBinding: Binding<Int>
+        var totalPageCountBinding: Binding<Int>
+        var currentScaleFactorBinding: Binding<CGFloat>
+        var searchResultsBinding: Binding<[PDFSelection]>
+
+        private weak var observedPDFView: PDFView?
+        private var loadedDocumentURL: URL?
+        private var lastSearchText = ""
+        private var lastHighlightedSearchResultIndex: Int?
+
+        init(
+            selectionSnapshot: Binding<ReaderSelectionSnapshot?>,
+            currentPageIndex: Binding<Int>,
+            totalPageCount: Binding<Int>,
+            currentScaleFactor: Binding<CGFloat>,
+            searchResults: Binding<[PDFSelection]>
+        ) {
+            selectionSnapshotBinding = selectionSnapshot
+            currentPageIndexBinding = currentPageIndex
+            totalPageCountBinding = totalPageCount
+            currentScaleFactorBinding = currentScaleFactor
+            searchResultsBinding = searchResults
+        }
+
+        func configure(pdfView: PDFView) {
+            guard observedPDFView !== pdfView else { return }
+            NotificationCenter.default.removeObserver(self)
+            observedPDFView = pdfView
+
+            NotificationCenter.default.addObserver(
+                self,
+                selector: #selector(handleSelectionChanged(_:)),
+                name: Notification.Name.PDFViewSelectionChanged,
+                object: pdfView
+            )
+            NotificationCenter.default.addObserver(
+                self,
+                selector: #selector(handlePageChanged(_:)),
+                name: Notification.Name.PDFViewPageChanged,
+                object: pdfView
+            )
+            NotificationCenter.default.addObserver(
+                self,
+                selector: #selector(handleScaleChanged(_:)),
+                name: Notification.Name.PDFViewScaleChanged,
+                object: pdfView
+            )
+        }
+
+        func loadDocumentIfNeeded(from url: URL, into pdfView: PDFView) {
+            guard loadedDocumentURL != url else { return }
+            SecurityScopedURLAccess.withAccess(to: url.deletingLastPathComponent()) {
+                pdfView.document = PDFDocument(url: url)
+            }
+            loadedDocumentURL = url
+            totalPageCountBinding.wrappedValue = pdfView.document?.pageCount ?? 0
+            if let currentPage = pdfView.currentPage, let document = pdfView.document {
+                currentPageIndexBinding.wrappedValue = document.index(for: currentPage)
+            } else {
+                currentPageIndexBinding.wrappedValue = 0
+            }
+            currentScaleFactorBinding.wrappedValue = pdfView.scaleFactor
+        }
+
+        func reconcileAnnotations(_ annotations: [PaperAnnotation], in pdfView: PDFView) {
+            guard let document = pdfView.document else { return }
+
+            for pageIndex in 0..<document.pageCount {
+                guard let page = document.page(at: pageIndex) else { continue }
+                let existing = page.annotations.filter { ReaderHighlightOverlayIdentity(userName: $0.userName) != nil }
+                existing.forEach(page.removeAnnotation(_:))
+            }
+
+            for annotation in annotations {
+                guard let page = document.page(at: annotation.pageIndex) else { continue }
+                for (rectIndex, rect) in annotation.rects.enumerated() {
+                    let pdfAnnotation = PDFAnnotation(bounds: rect.cgRect, forType: .highlight, withProperties: nil)
+                    pdfAnnotation.color = annotation.color.pdfColor
+                    pdfAnnotation.userName = annotation.overlayIdentity(forRectAt: rectIndex).userName
+                    page.addAnnotation(pdfAnnotation)
+                }
+            }
+        }
+
+        func performSearch(_ text: String, in pdfView: PDFView) {
+            guard lastSearchText != text else { return }
+            lastSearchText = text
+            lastHighlightedSearchResultIndex = nil
+            guard let document = pdfView.document, text.isEmpty == false else {
+                searchResultsBinding.wrappedValue = []
+                return
+            }
+            searchResultsBinding.wrappedValue = document.findString(text, withOptions: .caseInsensitive)
+        }
+
+        func highlightSearchResult(at index: Int, in pdfView: PDFView) {
+            guard let document = pdfView.document,
+                  searchResultsBinding.wrappedValue.isEmpty == false,
+                  index >= 0,
+                  index < searchResultsBinding.wrappedValue.count,
+                  lastHighlightedSearchResultIndex != index else {
+                return
+            }
+            lastHighlightedSearchResultIndex = index
+            let selection = searchResultsBinding.wrappedValue[index]
+            pdfView.setCurrentSelection(selection, animate: true)
+            pdfView.go(to: selection)
+            totalPageCountBinding.wrappedValue = document.pageCount
+        }
+
+        @objc
+        private func handleSelectionChanged(_ notification: Notification) {
+            guard let pdfView = notification.object as? PDFView else { return }
+            selectionSnapshotBinding.wrappedValue = makeSelectionSnapshot(in: pdfView)
+        }
+
+        @objc
+        private func handlePageChanged(_ notification: Notification) {
+            guard let pdfView = notification.object as? PDFView else { return }
+            if let page = pdfView.currentPage, let document = pdfView.document {
+                currentPageIndexBinding.wrappedValue = document.index(for: page)
+                totalPageCountBinding.wrappedValue = document.pageCount
+            }
+        }
+
+        @objc
+        private func handleScaleChanged(_ notification: Notification) {
+            guard let pdfView = notification.object as? PDFView else { return }
+            currentScaleFactorBinding.wrappedValue = pdfView.scaleFactor
+        }
+
+        private func makeSelectionSnapshot(in pdfView: PDFView) -> ReaderSelectionSnapshot? {
+            guard let selection = pdfView.currentSelection,
+                  let selectionText = selection.string,
+                  let page = selection.pages.first,
+                  selection.pages.count == 1,
+                  let document = pdfView.document else {
+                return nil
+            }
+
+            let lineSelections = selection.selectionsByLine()
+            let rects = lineSelections.compactMap { lineSelection in
+                lineSelection.bounds(for: page)
+            }
+
+            return ReaderSelectionSnapshot(
+                pageIndex: document.index(for: page),
+                quotedText: selectionText,
+                rects: rects
+            )
+        }
+    }
+}
+#endif

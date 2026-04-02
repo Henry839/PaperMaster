@@ -39,6 +39,7 @@ struct ProcessCommandRunner: CommandRunning {
         currentDirectoryURL: URL? = nil,
         standardInput: Data? = nil
     ) throws -> CommandResult {
+        #if os(macOS)
         let process = Process()
         let standardOutputPipe = Pipe()
         let standardErrorPipe = Pipe()
@@ -93,6 +94,13 @@ struct ProcessCommandRunner: CommandRunning {
         }
 
         return result
+        #else
+        throw CommandRunnerError.nonZeroExit(
+            executablePath: executableURL.path,
+            status: 1,
+            standardError: "Process execution is unavailable on this platform."
+        )
+        #endif
     }
 }
 
@@ -323,7 +331,9 @@ struct PaperStorageService: Sendable {
     func removeManagedPDF(localURL: URL?, remoteURL: URL?) async throws {
         if let localURL {
             if fileManager.fileExists(atPath: localURL.path) {
-                try fileManager.removeItem(at: localURL)
+                try SecurityScopedURLAccess.withAccess(to: localURL.deletingLastPathComponent()) {
+                    try fileManager.removeItem(at: localURL)
+                }
             }
             return
         }
@@ -389,10 +399,14 @@ struct PaperStorageService: Sendable {
         directoryURL: URL,
         filename: String
     ) async throws -> URL {
-        try fileManager.createDirectory(at: directoryURL, withIntermediateDirectories: true, attributes: nil)
+        try SecurityScopedURLAccess.withAccess(to: directoryURL) {
+            try fileManager.createDirectory(at: directoryURL, withIntermediateDirectories: true, attributes: nil)
+        }
         let destinationURL = directoryURL.appendingPathComponent(filename)
         try await Task.detached(priority: .utility) {
-            try data.write(to: destinationURL, options: [.atomic])
+            try SecurityScopedURLAccess.withAccess(to: directoryURL) {
+                try data.write(to: destinationURL, options: [.atomic])
+            }
         }.value
         return destinationURL
     }
@@ -402,7 +416,9 @@ struct PaperStorageService: Sendable {
         directoryURL: URL,
         filename: String
     ) async throws -> URL {
-        try fileManager.createDirectory(at: directoryURL, withIntermediateDirectories: true, attributes: nil)
+        try SecurityScopedURLAccess.withAccess(to: directoryURL) {
+            try fileManager.createDirectory(at: directoryURL, withIntermediateDirectories: true, attributes: nil)
+        }
 
         let standardizedSourceURL = sourceFileURL.standardizedFileURL
         let destinationURL = directoryURL.appendingPathComponent(filename)
@@ -413,17 +429,21 @@ struct PaperStorageService: Sendable {
         }
 
         if standardizedSourceURL.deletingLastPathComponent() == directoryURL.standardizedFileURL {
-            if fileManager.fileExists(atPath: destinationURL.path) {
-                try fileManager.removeItem(at: destinationURL)
+            try SecurityScopedURLAccess.withAccess(to: directoryURL) {
+                if fileManager.fileExists(atPath: destinationURL.path) {
+                    try fileManager.removeItem(at: destinationURL)
+                }
+                try fileManager.moveItem(at: sourceFileURL, to: destinationURL)
             }
-            try fileManager.moveItem(at: sourceFileURL, to: destinationURL)
             return destinationURL
         }
 
-        if fileManager.fileExists(atPath: destinationURL.path) {
-            try fileManager.removeItem(at: destinationURL)
+        try SecurityScopedURLAccess.withAccess(to: directoryURL) {
+            if fileManager.fileExists(atPath: destinationURL.path) {
+                try fileManager.removeItem(at: destinationURL)
+            }
+            try fileManager.copyItem(at: sourceFileURL, to: destinationURL)
         }
-        try fileManager.copyItem(at: sourceFileURL, to: destinationURL)
         return destinationURL
     }
 

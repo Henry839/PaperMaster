@@ -65,7 +65,14 @@ struct AppRootView: View {
     }
 
     private func openReaderWindow(for presentation: ReaderPresentation) {
-        openWindow(id: PaperMasterApp.readerWindowID, value: presentation.paperID)
+        openWindow(id: PaperMasterSceneID.reader, value: presentation.paperID)
+    }
+
+    private var readerPresentationBinding: Binding<ReaderPresentation?> {
+        Binding(
+            get: { router.readerPresentation },
+            set: { router.readerPresentation = $0 }
+        )
     }
 
     private var displayedPapers: [Paper] {
@@ -140,10 +147,19 @@ struct AppRootView: View {
             .sheet(isPresented: feedbackSheetBinding) {
                 FeedbackCaptureSheet(snapshot: feedbackSnapshot)
             }
+            #if os(iOS)
+            .fullScreenCover(item: readerPresentationBinding) { presentation in
+                IPadReaderRootView(presentation: presentation)
+                    .environment(services)
+                    .environment(router)
+            }
+            #endif
+            #if os(macOS)
             .onChange(of: router.readerPresentation?.id) { _, newID in
                 guard let presentation = router.readerPresentation else { return }
                 openReaderWindow(for: presentation)
             }
+            #endif
             .toolbar {
                 toolbarContent
             }
@@ -194,12 +210,14 @@ struct AppRootView: View {
             .overlay {
                 importDropOverlay
             }
+            #if os(macOS)
             .safeAreaInset(edge: .bottom, spacing: 0) {
                 if agentRuntime.isPanelVisible {
                     IntegratedTerminalPanel()
                         .transition(.move(edge: .bottom).combined(with: .opacity))
                 }
             }
+            #endif
             .onDrop(of: [UTType.fileURL], isTargeted: $isImportDropTargeted, perform: handleImportedFiles)
             .animation(.snappy(duration: 0.22), value: services.presentedNotice?.id)
     }
@@ -320,6 +338,7 @@ struct AppRootView: View {
             }
         }
 
+        #if os(macOS)
         ToolbarItem(placement: .primaryAction) {
             Button("Terminal", systemImage: "terminal") {
                 if agentRuntime.isPanelVisible {
@@ -332,6 +351,7 @@ struct AppRootView: View {
                 }
             }
         }
+        #endif
 
         ToolbarItem(placement: .primaryAction) {
             Button("Add Paper", systemImage: "plus") {
@@ -469,7 +489,7 @@ struct AppRootView: View {
                         paperRow(for: paper, queueRank: router.selectedScreen == .queue ? index + 1 : nil)
                     }
                 }
-                .listStyle(.inset(alternatesRowBackgrounds: true))
+                .paperMasterListStyle()
                 .animation(queueDragAnimation, value: queuePreviewPaperIDs)
                 .onDrop(
                     of: [UTType.text],
@@ -841,6 +861,17 @@ struct AppRootView: View {
         }
     }
 
+}
+
+private extension View {
+    @ViewBuilder
+    func paperMasterListStyle() -> some View {
+        #if os(macOS)
+        self.listStyle(.inset(alternatesRowBackgrounds: true))
+        #else
+        self.listStyle(.insetGrouped)
+        #endif
+    }
 }
 
 private struct QueueRowDropDelegate: DropDelegate {
