@@ -3,7 +3,7 @@ import SwiftTerm
 import SwiftUI
 
 struct IntegratedTerminalPanel: View {
-    @Environment(AgentRuntimeService.self) private var agentRuntime
+    @EnvironmentObject private var agentRuntime: AgentRuntimeService
     @State private var dragStartHeight: CGFloat?
 
     var body: some View {

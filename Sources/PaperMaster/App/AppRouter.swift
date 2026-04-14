@@ -1,5 +1,5 @@
+import Combine
 import Foundation
-import Observation
 
 struct ReaderPresentation: Identifiable {
     let id = UUID()
@@ -9,13 +9,12 @@ struct ReaderPresentation: Identifiable {
 }
 
 @MainActor
-@Observable
-final class AppRouter {
-    var selectedScreen: AppScreen = .today
-    var selectedPaperID: UUID?
-    var isImportSheetPresented = false
-    var isFeedbackSheetPresented = false
-    var readerPresentation: ReaderPresentation?
+final class AppRouter: ObservableObject {
+    @Published var selectedScreen: AppScreen = .today
+    @Published var selectedPaperID: UUID?
+    @Published var isImportSheetPresented = false
+    @Published var isFeedbackSheetPresented = false
+    @Published var readerPresentation: ReaderPresentation?
 
     func handleNotification(userInfo: [AnyHashable: Any]) {
         if let destination = userInfo["destination"] as? String, destination == "today" {

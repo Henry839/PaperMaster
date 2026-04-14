@@ -57,8 +57,8 @@ struct ReminderService: Sendable {
     let center: NotificationSchedulingCenter
     let calendar: Calendar
 
-    init(center: NotificationSchedulingCenter = UserNotificationCenterAdapter(), calendar: Calendar = .current) {
-        self.center = center
+    init(center: NotificationSchedulingCenter? = nil, calendar: Calendar = .current) {
+        self.center = center ?? UserNotificationCenterAdapter()
         self.calendar = calendar
     }
 

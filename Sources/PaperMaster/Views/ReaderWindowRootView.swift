@@ -1,14 +1,29 @@
+#if !PAPERMASTER_LEGACY_MODE
 import SwiftData
+#endif
 import SwiftUI
 
 struct ReaderWindowRootView: View {
     let paperID: UUID?
     @Environment(\.modelContext) private var modelContext
-    @Environment(AppServices.self) private var services
-    @Environment(AppRouter.self) private var router
-
+    @EnvironmentObject private var services: AppServices
+    @EnvironmentObject private var router: AppRouter
+#if PAPERMASTER_LEGACY_MODE
+    @EnvironmentObject private var libraryStore: LegacyLibraryStore
+#else
     @Query(sort: \Paper.dateAdded, order: .reverse) private var papers: [Paper]
     @Query private var settingsList: [UserSettings]
+#endif
+
+#if PAPERMASTER_LEGACY_MODE
+    private var papers: [Paper] {
+        libraryStore.papers.sorted { $0.dateAdded > $1.dateAdded }
+    }
+
+    private var settingsList: [UserSettings] {
+        libraryStore.settingsList
+    }
+#endif
 
     private var settings: UserSettings? {
         settingsList.first

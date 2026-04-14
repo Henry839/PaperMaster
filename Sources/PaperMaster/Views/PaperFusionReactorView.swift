@@ -2,11 +2,11 @@ import SwiftUI
 import UniformTypeIdentifiers
 
 struct PaperFusionReactorView: View {
-    @Environment(AppServices.self) private var services
+    @EnvironmentObject private var services: AppServices
 
     let papers: [Paper]
     let settings: UserSettings
-    @Bindable var session: FusionReactorSession
+    @ObservedObject var session: FusionReactorSession
 
     @State private var searchText = ""
     @State private var isDropTargeted = false
@@ -271,7 +271,7 @@ struct PaperFusionReactorView: View {
 }
 
 struct PaperFusionResultView: View {
-    @Bindable var session: FusionReactorSession
+    @ObservedObject var session: FusionReactorSession
     let selectedPapers: [Paper]
     let providerReadiness: AIProviderReadiness
 

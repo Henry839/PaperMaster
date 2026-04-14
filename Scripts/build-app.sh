@@ -31,7 +31,7 @@ cd "$ROOT_DIR"
 mkdir -p /tmp/swift-module-cache /tmp/clang-module-cache
 "$ROOT_DIR/Scripts/swift-overlay.sh" build --scratch-path "$BUILD_DIR" -c "$CONFIGURATION"
 
-BINARY_PATH="$BUILD_DIR/arm64-apple-macosx/$CONFIGURATION/$SOURCE_BINARY_NAME"
+BINARY_PATH="$(find "$BUILD_DIR" -path "*/$CONFIGURATION/$SOURCE_BINARY_NAME" -type f | head -n 1)"
 if [[ ! -x "$BINARY_PATH" ]]; then
   echo "Expected binary not found at $BINARY_PATH" >&2
   exit 1

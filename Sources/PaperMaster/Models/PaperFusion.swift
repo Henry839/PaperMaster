@@ -1,5 +1,5 @@
+import Combine
 import Foundation
-import Observation
 
 enum FusionMaterialSelection {
     static let minimumPaperCount = 2
@@ -37,11 +37,10 @@ struct PaperFusionResult: Equatable, Sendable {
 }
 
 @MainActor
-@Observable
-final class FusionReactorSession {
-    var selectedPaperIDs: [UUID] = []
-    var result: PaperFusionResult?
-    var isFusing = false
+final class FusionReactorSession: ObservableObject {
+    @Published var selectedPaperIDs: [UUID] = []
+    @Published var result: PaperFusionResult?
+    @Published var isFusing = false
 
     var canFuse: Bool {
         selectedPaperIDs.count >= FusionMaterialSelection.minimumPaperCount && isFusing == false

@@ -1,5 +1,7 @@
 import Foundation
+#if !PAPERMASTER_LEGACY_MODE
 import SwiftData
+#endif
 
 enum FeedbackValidationError: LocalizedError, Equatable {
     case emptyIntendedAction
@@ -62,6 +64,131 @@ struct FeedbackSnapshot {
     }
 }
 
+#if PAPERMASTER_LEGACY_MODE
+final class FeedbackEntry: Identifiable {
+    let id: UUID
+    var createdAt: Date
+    var screenRawValue: String
+    var screenTitle: String
+    var selectedPaperID: UUID?
+    var selectedPaperTitle: String?
+    var selectedPaperStatusRawValue: String?
+    var intendedAction: String
+    var feedbackText: String
+
+    init(
+        id: UUID = UUID(),
+        createdAt: Date = .now,
+        screenRawValue: String,
+        screenTitle: String,
+        selectedPaperID: UUID? = nil,
+        selectedPaperTitle: String? = nil,
+        selectedPaperStatusRawValue: String? = nil,
+        intendedAction: String,
+        feedbackText: String
+    ) {
+        self.id = id
+        self.createdAt = createdAt
+        self.screenRawValue = screenRawValue
+        self.screenTitle = screenTitle
+        self.selectedPaperID = selectedPaperID
+        self.selectedPaperTitle = selectedPaperTitle
+        self.selectedPaperStatusRawValue = selectedPaperStatusRawValue
+        self.intendedAction = intendedAction
+        self.feedbackText = feedbackText
+    }
+
+    convenience init(snapshot: FeedbackEntrySnapshot) {
+        self.init(
+            id: snapshot.id,
+            createdAt: snapshot.createdAt,
+            screenRawValue: snapshot.screenRawValue,
+            screenTitle: snapshot.screenTitle,
+            selectedPaperID: snapshot.selectedPaperID,
+            selectedPaperTitle: snapshot.selectedPaperTitle,
+            selectedPaperStatusRawValue: snapshot.selectedPaperStatusRawValue,
+            intendedAction: snapshot.intendedAction,
+            feedbackText: snapshot.feedbackText
+        )
+    }
+
+    var selectedPaperStatusTitle: String? {
+        guard let selectedPaperStatusRawValue else { return nil }
+        return PaperStatus(rawValue: selectedPaperStatusRawValue)?.title
+    }
+
+    var paperContextSummary: String? {
+        guard let selectedPaperTitle else { return nil }
+        guard let selectedPaperStatusTitle else { return selectedPaperTitle }
+        return "\(selectedPaperTitle) (\(selectedPaperStatusTitle))"
+    }
+
+    var exportText: String {
+        var lines = [
+            "Timestamp: \(createdAt.ISO8601Format())",
+            "Screen: \(screenTitle)"
+        ]
+
+        if let paperContextSummary {
+            lines.append("Paper: \(paperContextSummary)")
+        }
+
+        lines.append("Intended Action: \(intendedAction)")
+        lines.append("Feedback:")
+        lines.append(feedbackText)
+        return lines.joined(separator: "\n")
+    }
+
+    var snapshot: FeedbackEntrySnapshot {
+        FeedbackEntrySnapshot(
+            id: id,
+            createdAt: createdAt,
+            screenRawValue: screenRawValue,
+            screenTitle: screenTitle,
+            selectedPaperID: selectedPaperID,
+            selectedPaperTitle: selectedPaperTitle,
+            selectedPaperStatusRawValue: selectedPaperStatusRawValue,
+            intendedAction: intendedAction,
+            feedbackText: feedbackText
+        )
+    }
+
+    static func combinedExportText(for entries: [FeedbackEntry]) -> String {
+        entries
+            .map(\.exportText)
+            .joined(separator: "\n\n---\n\n")
+    }
+
+    static func make(
+        snapshot: FeedbackSnapshot,
+        submission: FeedbackSubmission,
+        createdAt: Date = .now
+    ) -> FeedbackEntry {
+        FeedbackEntry(
+            createdAt: createdAt,
+            screenRawValue: snapshot.screenRawValue,
+            screenTitle: snapshot.screenTitle,
+            selectedPaperID: snapshot.selectedPaperID,
+            selectedPaperTitle: snapshot.selectedPaperTitle,
+            selectedPaperStatusRawValue: snapshot.selectedPaperStatusRawValue,
+            intendedAction: submission.intendedAction,
+            feedbackText: submission.feedbackText
+        )
+    }
+}
+
+struct FeedbackEntrySnapshot: Codable {
+    let id: UUID
+    let createdAt: Date
+    let screenRawValue: String
+    let screenTitle: String
+    let selectedPaperID: UUID?
+    let selectedPaperTitle: String?
+    let selectedPaperStatusRawValue: String?
+    let intendedAction: String
+    let feedbackText: String
+}
+#else
 @Model
 final class FeedbackEntry {
     @Attribute(.unique) var id: UUID
@@ -146,3 +273,4 @@ final class FeedbackEntry {
         )
     }
 }
+#endif

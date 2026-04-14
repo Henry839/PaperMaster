@@ -1,19 +1,34 @@
 import AppKit
+#if !PAPERMASTER_LEGACY_MODE
 import SwiftData
+#endif
 import SwiftUI
 
 struct SettingsView: View {
     @Environment(\.modelContext) private var modelContext
-    @Environment(AppServices.self) private var services
-
+    @EnvironmentObject private var services: AppServices
+#if PAPERMASTER_LEGACY_MODE
+    @EnvironmentObject private var libraryStore: LegacyLibraryStore
+#endif
+    #if PAPERMASTER_LEGACY_MODE
+    @ObservedObject var settings: UserSettings
+    #else
     @Bindable var settings: UserSettings
+    #endif
     let allPapers: [Paper]
-
+#if !PAPERMASTER_LEGACY_MODE
     @Query(sort: \FeedbackEntry.createdAt, order: .reverse) private var feedbackEntries: [FeedbackEntry]
+#endif
     @State private var taggingAPIKey = ""
     @State private var didLoadTaggingAPIKey = false
     @State private var paperStoragePassword = ""
     @State private var hasSavedPaperStoragePassword = false
+
+#if PAPERMASTER_LEGACY_MODE
+    private var feedbackEntries: [FeedbackEntry] {
+        libraryStore.feedbackEntries.sorted { $0.createdAt > $1.createdAt }
+    }
+#endif
 
     var body: some View {
         ScrollView {

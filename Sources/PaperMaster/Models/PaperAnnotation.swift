@@ -1,6 +1,10 @@
 import AppKit
 import Foundation
+#if PAPERMASTER_LEGACY_MODE
+import Combine
+#else
 import SwiftData
+#endif
 
 enum ReaderHighlightColor: String, CaseIterable, Codable, Identifiable {
     case yellow
@@ -138,6 +142,98 @@ struct ReaderSelectionSnapshot: Equatable {
     }
 }
 
+#if PAPERMASTER_LEGACY_MODE
+final class PaperAnnotation: ObservableObject, Identifiable {
+    let id: UUID
+    @Published var pageIndex: Int
+    @Published var quotedText: String
+    @Published var noteText: String
+    @Published var colorRawValue: String
+    @Published var rectPayload: String
+    @Published var createdAt: Date
+    @Published var updatedAt: Date
+    weak var paper: Paper?
+
+    init(
+        id: UUID = UUID(),
+        paper: Paper,
+        pageIndex: Int,
+        quotedText: String,
+        noteText: String = "",
+        color: ReaderHighlightColor = .yellow,
+        rectPayload: String,
+        createdAt: Date = .now,
+        updatedAt: Date = .now
+    ) {
+        self.id = id
+        self.paper = paper
+        self.pageIndex = pageIndex
+        self.quotedText = quotedText.normalizedReaderContent
+        self.noteText = noteText
+        self.colorRawValue = color.rawValue
+        self.rectPayload = rectPayload
+        self.createdAt = createdAt
+        self.updatedAt = updatedAt
+    }
+
+    init(
+        id: UUID = UUID(),
+        pageIndex: Int,
+        quotedText: String,
+        noteText: String = "",
+        colorRawValue: String,
+        rectPayload: String,
+        createdAt: Date = .now,
+        updatedAt: Date = .now
+    ) {
+        self.id = id
+        self.pageIndex = pageIndex
+        self.quotedText = quotedText.normalizedReaderContent
+        self.noteText = noteText
+        self.colorRawValue = colorRawValue
+        self.rectPayload = rectPayload
+        self.createdAt = createdAt
+        self.updatedAt = updatedAt
+    }
+
+    convenience init(snapshot: PaperAnnotationSnapshot) {
+        self.init(
+            id: snapshot.id,
+            pageIndex: snapshot.pageIndex,
+            quotedText: snapshot.quotedText,
+            noteText: snapshot.noteText,
+            colorRawValue: snapshot.colorRawValue,
+            rectPayload: snapshot.rectPayload,
+            createdAt: snapshot.createdAt,
+            updatedAt: snapshot.updatedAt
+        )
+    }
+
+    var snapshot: PaperAnnotationSnapshot {
+        PaperAnnotationSnapshot(
+            id: id,
+            pageIndex: pageIndex,
+            quotedText: quotedText,
+            noteText: noteText,
+            colorRawValue: colorRawValue,
+            rectPayload: rectPayload,
+            createdAt: createdAt,
+            updatedAt: updatedAt
+        )
+    }
+}
+
+struct PaperAnnotationSnapshot: Codable {
+    let id: UUID
+    let pageIndex: Int
+    let quotedText: String
+    let noteText: String
+    let colorRawValue: String
+    let rectPayload: String
+    let createdAt: Date
+    let updatedAt: Date
+}
+#else
 @Model
 final class PaperAnnotation {
     @Attribute(.unique) var id: UUID
@@ -172,6 +268,7 @@ final class PaperAnnotation {
         self.updatedAt = updatedAt
     }
 }
+#endif
 
 extension PaperAnnotation {
     var color: ReaderHighlightColor {

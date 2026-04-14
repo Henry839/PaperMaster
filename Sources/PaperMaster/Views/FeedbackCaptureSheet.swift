@@ -1,10 +1,12 @@
+#if !PAPERMASTER_LEGACY_MODE
 import SwiftData
+#endif
 import SwiftUI
 
 struct FeedbackCaptureSheet: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.modelContext) private var modelContext
-    @Environment(AppServices.self) private var services
+    @EnvironmentObject private var services: AppServices
 
     let snapshot: FeedbackSnapshot
 

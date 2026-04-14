@@ -1,5 +1,7 @@
 import Foundation
+#if !PAPERMASTER_LEGACY_MODE
 import SwiftData
+#endif
 
 struct PaperCaptureRequest: Sendable {
     var sourceText: String

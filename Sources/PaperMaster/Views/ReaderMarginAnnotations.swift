@@ -293,7 +293,7 @@ struct ReaderMarginLeaderLinesCanvas: View {
 }
 
 private struct MarginCardHeightPreferenceKey: PreferenceKey {
-    nonisolated(unsafe) static var defaultValue: [UUID: CGFloat] = [:]
+    static var defaultValue: [UUID: CGFloat] = [:]
     static func reduce(value: inout [UUID: CGFloat], nextValue: () -> [UUID: CGFloat]) {
         value.merge(nextValue()) { _, new in new }
     }

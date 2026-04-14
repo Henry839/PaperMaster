@@ -2,10 +2,13 @@ import SwiftUI
 
 struct PaperDetailView: View {
     @Environment(\.modelContext) private var modelContext
-    @Environment(AppServices.self) private var services
-    @Environment(AppRouter.self) private var router
-
+    @EnvironmentObject private var services: AppServices
+    @EnvironmentObject private var router: AppRouter
+    #if PAPERMASTER_LEGACY_MODE
+    @ObservedObject var paper: Paper
+    #else
     @Bindable var paper: Paper
+    #endif
     let settings: UserSettings
     let allPapers: [Paper]
 

@@ -1,6 +1,8 @@
 import AppKit
 import PDFKit
+#if !PAPERMASTER_LEGACY_MODE
 import SwiftData
+#endif
 import SwiftUI
 
 struct ReaderView: View {
@@ -9,9 +11,12 @@ struct ReaderView: View {
     @AppStorage("reader.displayMode") private var displayModeRawValue = ReaderDisplayMode.singleContinuous.rawValue
     @AppStorage("reader.appearance") private var appearanceModeRawValue = ReaderAppearanceMode.normal.rawValue
     @Environment(\.modelContext) private var modelContext
-    @Environment(AppServices.self) private var services
-
+    @EnvironmentObject private var services: AppServices
+    #if PAPERMASTER_LEGACY_MODE
+    @ObservedObject var paper: Paper
+    #else
     @Bindable var paper: Paper
+    #endif
     let fileURL: URL
     let settings: UserSettings
 
@@ -1081,7 +1086,7 @@ struct ReaderView: View {
 }
 
 @MainActor
-private final class ReaderElfUnderlineOverlayProvider: NSObject, @preconcurrency PDFPageOverlayViewProvider {
+private final class ReaderElfUnderlineOverlayProvider: NSObject, PDFPageOverlayViewProvider {
     private var presentation: ReaderElfUnderlinePresentationState?
     private var displayBox: PDFDisplayBox = .cropBox
     private var overlayViews: [ObjectIdentifier: ReaderElfUnderlineOverlayView] = [:]

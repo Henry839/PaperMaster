@@ -3,8 +3,8 @@ import SwiftUI
 struct ImportPaperSheet: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.modelContext) private var modelContext
-    @Environment(AppServices.self) private var services
-    @Environment(AppRouter.self) private var router
+    @EnvironmentObject private var services: AppServices
+    @EnvironmentObject private var router: AppRouter
 
     let settings: UserSettings
     let currentPapers: [Paper]

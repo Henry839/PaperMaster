@@ -20,10 +20,19 @@ fi
 OVERLAY_DIR="$("$ROOT_DIR/Scripts/prepare-toolchain-overlay.sh")"
 mkdir -p /tmp/swift-module-cache /tmp/clang-module-cache
 
+swift_args=(
+  "$@"
+  -Xswiftc -plugin-path
+  -Xswiftc "$OVERLAY_DIR/lib/swift/host/plugins"
+)
+
+if "$SWIFT_BIN" -help 2>/dev/null | grep -q -- "-in-process-plugin-server-path"; then
+  swift_args+=(
+    -Xswiftc -in-process-plugin-server-path
+    -Xswiftc "$OVERLAY_DIR/bin/swift-plugin-server"
+  )
+fi
+
 SWIFT_MODULECACHE_PATH=/tmp/swift-module-cache \
 CLANG_MODULE_CACHE_PATH=/tmp/clang-module-cache \
-"$SWIFT_BIN" "$@" \
-  -Xswiftc -plugin-path \
-  -Xswiftc "$OVERLAY_DIR/lib/swift/host/plugins" \
-  -Xswiftc -in-process-plugin-server-path \
-  -Xswiftc "$OVERLAY_DIR/bin/swift-plugin-server"
+"$SWIFT_BIN" "${swift_args[@]}"

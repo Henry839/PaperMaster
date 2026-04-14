@@ -1,7 +1,7 @@
+import AppKit
+import Combine
 import Darwin
 import Foundation
-import AppKit
-import Observation
 import SwiftTerm
 
 struct AgentWorkspacePaths: Equatable, Sendable {
@@ -273,25 +273,24 @@ enum AgentTerminalError: LocalizedError {
 }
 
 @MainActor
-@Observable
-final class AgentTerminalSession: Identifiable {
+final class AgentTerminalSession: ObservableObject, Identifiable {
     let id: UUID
     let index: Int
     let workingDirectoryURL: URL
     let shellPath: String
     let shellArguments: [String]
 
-    @ObservationIgnored private let fileManager: FileManager
+    @ObservationIgnored private var fileManager: FileManager
     @ObservationIgnored private var masterFileHandle: FileHandle?
     @ObservationIgnored private var processMonitor: DispatchSourceProcess?
     @ObservationIgnored private var childPID: pid_t = 0
 
-    var title: String
-    var transcript: String
-    var state: AgentTerminalSessionState
-    var launchedAt: Date
-    var exitStatus: Int32?
-    var lastErrorMessage: String?
+    @Published var title: String
+    @Published var transcript: String
+    @Published var state: AgentTerminalSessionState
+    @Published var launchedAt: Date
+    @Published var exitStatus: Int32?
+    @Published var lastErrorMessage: String?
 
     init(
         index: Int,
@@ -364,7 +363,7 @@ final class AgentTerminalSession: Identifiable {
             let data = handle.availableData
             guard data.isEmpty == false else { return }
             let output = String(decoding: data, as: UTF8.self)
-            Task { @MainActor in
+            DispatchQueue.main.async { [weak self] in
                 self?.appendToTranscript(output)
             }
         }
@@ -413,23 +412,22 @@ final class AgentTerminalSession: Identifiable {
 }
 
 @MainActor
-@Observable
-final class AgentRuntimeService {
+final class AgentRuntimeService: ObservableObject {
     let workspacePaths: AgentWorkspacePaths
     let toolCatalog: [AgentToolDefinition]
 
-    @ObservationIgnored private let fileManager: FileManager
+    @ObservationIgnored private var fileManager: FileManager
 
-    var sessions: [AgentTerminalSession] = []
-    var selectedSessionID: UUID?
-    var preferredPermissionLevel: AgentToolPermissionLevel = .libraryWrite
-    var lastBootstrapErrorMessage: String?
-    var isPanelVisible = false
-    var panelHeight: CGFloat = 260
+    @Published var sessions: [AgentTerminalSession] = []
+    @Published var selectedSessionID: UUID?
+    @Published var preferredPermissionLevel: AgentToolPermissionLevel = .libraryWrite
+    @Published var lastBootstrapErrorMessage: String?
+    @Published var isPanelVisible = false
+    @Published var panelHeight: CGFloat = 260
     let minimumPanelHeight: CGFloat = 180
     let maximumPanelHeight: CGFloat = 620
-    var embeddedSessions: [EmbeddedTerminalSession] = []
-    var selectedEmbeddedSessionID: UUID?
+    @Published var embeddedSessions: [EmbeddedTerminalSession] = []
+    @Published var selectedEmbeddedSessionID: UUID?
 
     init(
         workspacePaths: AgentWorkspacePaths = .default(),
@@ -584,8 +582,7 @@ final class AgentRuntimeService {
 }
 
 @MainActor
-@Observable
-final class EmbeddedTerminalSession: Identifiable {
+final class EmbeddedTerminalSession: ObservableObject, Identifiable {
     let id = UUID()
     let index: Int
     let workingDirectoryURL: URL
@@ -594,9 +591,9 @@ final class EmbeddedTerminalSession: Identifiable {
     @ObservationIgnored var terminalView: LocalProcessTerminalView?
     @ObservationIgnored private var processDelegateProxy: EmbeddedTerminalProcessDelegate?
 
-    var title: String
-    var currentDirectoryPath: String?
-    var didStart = false
+    @Published var title: String
+    @Published var currentDirectoryPath: String?
+    @Published var didStart = false
 
     init(index: Int, workingDirectoryURL: URL, environment: [String: String]) {
         self.index = index

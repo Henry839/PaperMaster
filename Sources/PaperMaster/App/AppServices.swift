@@ -1,7 +1,9 @@
 import AppKit
+import Combine
 import Foundation
-import Observation
+#if !PAPERMASTER_LEGACY_MODE
 import SwiftData
+#endif
 
 struct PresentedError: Identifiable {
     let id = UUID()
@@ -31,8 +33,7 @@ struct SystemTextClipboardWriter: TextClipboardWriting {
 }
 
 @MainActor
-@Observable
-final class AppServices {
+final class AppServices: ObservableObject {
     let importService: PaperImportService
     let fusionGenerator: PaperFusionGenerating?
     let paperCardGenerator: PaperCardGenerating?
@@ -46,20 +47,20 @@ final class AppServices {
     let paperStorageCredentialStore: PaperStorageCredentialStoring
     let readerDocumentContextLoader: ReaderDocumentContextLoading
     let textClipboard: TextClipboardWriting
-    @ObservationIgnored private let fileManager: FileManager
-    @ObservationIgnored private let paperCardHTMLDirectoryURL: URL
-    @ObservationIgnored private let agentImportDirectoryURL: URL
-    @ObservationIgnored private let startupNoticeMessage: String?
-    @ObservationIgnored private let startupErrorMessage: String?
+    @ObservationIgnored private var fileManager: FileManager
+    @ObservationIgnored private var paperCardHTMLDirectoryURL: URL
+    @ObservationIgnored private var agentImportDirectoryURL: URL
+    @ObservationIgnored private var startupNoticeMessage: String?
+    @ObservationIgnored private var startupErrorMessage: String?
     @ObservationIgnored private var noticeDismissTask: Task<Void, Never>?
     @ObservationIgnored private var importStatusDismissTask: Task<Void, Never>?
     @ObservationIgnored private var storageFolderMonitorTask: Task<Void, Never>?
     @ObservationIgnored private var monitoredImportDirectorySignature: String?
     @ObservationIgnored private var activeLocalImportPaths: Set<String> = []
-    private(set) var didBootstrap = false
-    var presentedError: PresentedError?
-    var presentedNotice: PresentedNotice?
-    var importStatusMessage: String?
+    @Published private(set) var didBootstrap = false
+    @Published var presentedError: PresentedError?
+    @Published var presentedNotice: PresentedNotice?
+    @Published var importStatusMessage: String?
 
     init(
         importService: PaperImportService,
@@ -70,7 +71,7 @@ final class AppServices {
         schedulerService: SchedulerService = SchedulerService(),
         pdfCacheService: PDFCacheService = PDFCacheService(),
         paperStorageService: PaperStorageService = PaperStorageService(),
-        reminderService: ReminderService = ReminderService(),
+        reminderService: ReminderService? = nil,
         taggingCredentialStore: TaggingCredentialStoring = InMemoryTaggingCredentialStore(),
         paperStorageCredentialStore: PaperStorageCredentialStoring = InMemoryPaperStorageCredentialStore(),
         readerDocumentContextLoader: ReaderDocumentContextLoading = PDFKitReaderDocumentContextLoader(),
@@ -89,7 +90,7 @@ final class AppServices {
         self.schedulerService = schedulerService
         self.pdfCacheService = pdfCacheService
         self.paperStorageService = paperStorageService
-        self.reminderService = reminderService
+        self.reminderService = reminderService ?? ReminderService()
         self.taggingCredentialStore = taggingCredentialStore
         self.paperStorageCredentialStore = paperStorageCredentialStore
         self.readerDocumentContextLoader = readerDocumentContextLoader

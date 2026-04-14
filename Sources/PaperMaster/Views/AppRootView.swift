@@ -1,4 +1,6 @@
+#if !PAPERMASTER_LEGACY_MODE
 import SwiftData
+#endif
 import SwiftUI
 import UniformTypeIdentifiers
 
@@ -11,20 +13,33 @@ private let queueDragAnimation = Animation.interactiveSpring(
 struct AppRootView: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(\.openWindow) private var openWindow
-    @Environment(AppServices.self) private var services
-    @Environment(AgentRuntimeService.self) private var agentRuntime
-    @Environment(AppRouter.self) private var router
-
+    @EnvironmentObject private var services: AppServices
+    @EnvironmentObject private var agentRuntime: AgentRuntimeService
+    @EnvironmentObject private var router: AppRouter
+#if PAPERMASTER_LEGACY_MODE
+    @EnvironmentObject private var libraryStore: LegacyLibraryStore
+#else
     @Query(sort: \Paper.dateAdded, order: .reverse) private var papers: [Paper]
     @Query private var settingsList: [UserSettings]
+#endif
 
     @State private var librarySearch = ""
     @State private var libraryStatusFilter = "all"
     @State private var draggedQueuePaperID: UUID?
     @State private var queuePreviewPaperIDs: [UUID]?
     @State private var queueDropTargetPaperID: UUID?
-    @State private var fusionSession = FusionReactorSession()
+    @StateObject private var fusionSession = FusionReactorSession()
     @State private var isImportDropTargeted = false
+
+#if PAPERMASTER_LEGACY_MODE
+    private var papers: [Paper] {
+        libraryStore.papers.sorted { $0.dateAdded > $1.dateAdded }
+    }
+
+    private var settingsList: [UserSettings] {
+        libraryStore.settingsList
+    }
+#endif
 
     private var settings: UserSettings? {
         settingsList.first

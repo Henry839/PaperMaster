@@ -1,3 +1,4 @@
+#if !PAPERMASTER_LEGACY_MODE
 import Foundation
 import SQLite3
 import SwiftData
@@ -1734,3 +1735,4 @@ enum PaperMasterMigrationPlan: SchemaMigrationPlan {
         ]
     }
 }
+#endif
